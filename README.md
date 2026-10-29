@@ -11,7 +11,7 @@ Thuộc hệ sinh thái **HRM Enterprise**, kết nối trực tiếp với Core
 - **Framework:** Flutter 3.x (Dart 3.x)
 - **Thiết kế UI/UX:** Chuẩn Material 3, Font chữ `Public Sans`, Màu thương hiệu chủ đạo `#8E1B2F` (Burgundy Red)
 - **Kiến trúc:** Feature-first Architecture, Repository Pattern, State Management
-- **Nền tảng:** iOS (Flutter)
+- **Hỗ trợ đa nền tảng:** Android, iOS, Web, Windows
 
 ---
 
@@ -36,33 +36,37 @@ Thuộc hệ sinh thái **HRM Enterprise**, kết nối trực tiếp với Core
 
 ```text
 mobile/
-├── docs/                               # Tài liệu thiết kế hệ thống
-└── mobile/                             # Mã nguồn ứng dụng Flutter
-    ├── lib/
-    │   ├── main.dart                   # Điểm khởi chạy ứng dụng
-    │   └── src/
-    │       ├── app.dart                # Cấu hình MaterialApp, theme, route
-    │       ├── core/                   # Cấu hình nền tảng:
-    │       │   ├── config/             # Cấu hình công ty, môi trường
-    │       │   ├── constants/          # Màu sắc (AppColors #8E1B2F), typography (Public Sans)
-    │       │   ├── models/             # Data models (User, Branch, Attendance...)
-    │       │   ├── network/            # HTTP Client kết nối API Gateway
-    │       │   ├── router/             # Định tuyến màn hình
-    │       │   └── theme/              # Theme Material 3
-    │       └── features/               # Phân hệ chức năng:
-    │           ├── auth/               # Đăng nhập, xác thực, màn hình splash
-    │           ├── home/               # Màn hình chính, widget chấm công Wi-Fi
-    │           ├── schedule/           # Lịch làm việc, đăng ký & xem ca
-    │           ├── leave_request/      # Nộp đơn từ (nghỉ phép, OT, giải trình)
-    │           ├── salary/             # Tra cứu phiếu lương, tạm ứng lương
-    │           ├── approvals/          # Phê duyệt đơn từ (Manager)
-    │           ├── news/               # Bảng tin nội bộ
-    │           ├── regulations/        # Quy chế & chính sách công ty
-    │           ├── notifications/      # Thông báo hệ thống
-    │           └── profile/            # Thông tin cá nhân, đổi mật khẩu, thiết bị
-    ├── ios/                            # Cấu hình native iOS
-    ├── pubspec.yaml                    # Khai báo thư viện phụ thuộc & assets
-    └── test/                           # Unit & Widget tests
+├── lib/
+│   ├── main.dart                   # Điểm khởi chạy ứng dụng
+│   └── src/
+│       ├── app.dart                # Cấu hình MaterialApp, theme, route
+│       ├── core/                   # Cấu hình nền tảng:
+│       │   ├── config/             # Cấu hình công ty, môi trường
+│       │   ├── constants/          # Màu sắc (AppColors #8E1B2F), typography (Public Sans)
+│       │   ├── models/             # Data models (User, Branch, Attendance...)
+│       │   ├── network/            # HTTP Client kết nối API Gateway
+│       │   ├── router/             # Định tuyến màn hình
+│       │   └── theme/              # Theme Material 3
+│       └── features/               # Phân hệ chức năng:
+│           ├── auth/               # Đăng nhập, xác thực, màn hình splash
+│           ├── home/               # Màn hình chính, widget chấm công Wi-Fi
+│           ├── schedule/           # Lịch làm việc, đăng ký & xem ca
+│           ├── leave_request/      # Nộp đơn từ (nghỉ phép, OT, giải trình)
+│           ├── salary/             # Tra cứu phiếu lương, tạm ứng lương
+│           ├── approvals/          # Phê duyệt đơn từ (Manager)
+│           ├── news/               # Bảng tin nội bộ
+│           ├── regulations/        # Quy chế & chính sách công ty
+│           ├── notifications/      # Thông báo hệ thống
+│           └── profile/            # Thông tin cá nhân, đổi mật khẩu, thiết bị
+├── android/                        # Cấu hình native Android
+├── ios/                            # Cấu hình native iOS
+├── web/                            # Hỗ trợ Web Flutter
+├── windows/                        # Hỗ trợ Windows Desktop
+├── pubspec.yaml                    # Khai báo thư viện phụ thuộc & assets
+├── pubspec.lock
+├── analysis_options.yaml
+├── test/                           # Unit & Widget tests
+└── README.md
 ```
 
 ---
@@ -72,22 +76,19 @@ mobile/
 ### Yêu cầu tiên quyết
 - **Flutter SDK** >= 3.22.x
 - **Dart SDK** >= 3.4.x
-- **Xcode** (dành cho macOS/iOS)
+- **Android Studio** (Android SDK) / **Xcode** (dành cho macOS/iOS)
 - **API Gateway backend** đang chạy tại port `4000`
 
 ### Các bước khởi chạy
 
 ```bash
-# 1. Di chuyển vào thư mục mobile
-cd mobile
-
-# 2. Tải các package phụ thuộc
+# 1. Tải các package phụ thuộc
 flutter pub get
 
-# 3. Kiểm tra thiết bị / máy ảo kết nối
+# 2. Kiểm tra thiết bị / máy ảo kết nối
 flutter devices
 
-# 4. Chạy ứng dụng trên thiết bị / máy ảo
+# 3. Chạy ứng dụng trên thiết bị / máy ảo
 flutter run
 ```
 
@@ -95,8 +96,9 @@ flutter run
 
 Chỉnh sửa địa chỉ máy chủ trong file cấu hình mạng `lib/src/core/network/api_client.dart`:
 
-- **iOS Simulator:** `http://localhost:4000`
-- **Thiết bị iOS thật (Cùng mạng LAN Wi-Fi với máy tính):** `http://<IP_MÁY_TÍNH>:4000`
+- **Android Emulator (Máy ảo Android Studio):** `http://10.0.2.2:4000`
+- **iOS Simulator / macOS:** `http://localhost:4000`
+- **Thiết bị thật (Cùng mạng LAN Wi-Fi với máy tính):** `http://<IP_MÁY_TÍNH>:4000`
 
 ---
 
