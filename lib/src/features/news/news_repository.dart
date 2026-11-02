@@ -32,7 +32,7 @@ class NewsRepository {
         title: j['title']?.toString() ?? '',
         summary: j['summary']?.toString() ?? '',
         content: j['content']?.toString() ?? '',
-        author: j['author']?.toString() ?? 'Ban Quản trị',
+        author: j['author']?.toString() ?? '',
         date: j['date']?.toString() ?? '',
         tag: j['tag']?.toString() ?? 'Thông báo',
         tagColor: _mapToneToColor(j['tagTone']?.toString()),
