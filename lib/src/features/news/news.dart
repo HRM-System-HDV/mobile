@@ -99,7 +99,7 @@ class _NewsScreenState extends State<NewsScreen> {
               const SizedBox(height: 10),
               Text(article.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
               const SizedBox(height: 6),
-              Text('Đăng bởi: ${article.author} • ${article.date}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+              Text(article.author.isNotEmpty ? 'Đăng bởi: ${article.author} • ${article.date}' : 'Ngày đăng: ${article.date}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
               const SizedBox(height: 14),
               const Divider(height: 1),
               const SizedBox(height: 14),
@@ -331,9 +331,11 @@ class _NewsScreenState extends State<NewsScreen> {
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          const FaIcon(FontAwesomeIcons.user, size: 13, color: AppColors.textSecondary),
-                          const SizedBox(width: 4),
-                          Text(a.author, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                          if (a.author.isNotEmpty) ...[
+                            const FaIcon(FontAwesomeIcons.user, size: 13, color: AppColors.textSecondary),
+                            const SizedBox(width: 4),
+                            Text(a.author, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                          ],
                           const Spacer(),
                           const Text('Chi tiết', style: TextStyle(fontSize: 11.5, color: AppColors.primary, fontWeight: FontWeight.bold)),
                           const FaIcon(FontAwesomeIcons.chevronRight, size: 14, color: AppColors.primary),
