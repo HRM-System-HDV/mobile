@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
 import '../../core/state/branch_scope.dart';
+import '../../core/state/user_scope.dart';
 import 'notification_repository.dart';
 import 'request_detail.dart';
 
@@ -26,6 +28,7 @@ class NotificationItem {
   bool isRead;
 
   // Thuộc tính yêu cầu đổi ca / nhờ làm thay (nếu có)
+  final String? requestId; // id đơn từ thật (metadata.requestId), KHÔNG dùng id thông báo
   final String? requestType; // 'cover' hoặc 'swap'
   final String? senderName;
   final String? senderRole;
@@ -45,6 +48,10 @@ class NotificationItem {
   final String? reason;
   ShiftRequestStatus requestStatus;
 
+  /// Chỉ thông báo có cả id đơn thật lẫn loại yêu cầu mới mở được màn phản hồi ca.
+  bool get isShiftRequest =>
+      (requestId ?? '').isNotEmpty && (requestType ?? '').isNotEmpty;
+
   NotificationItem({
     required this.id,
     required this.title,
@@ -53,6 +60,7 @@ class NotificationItem {
     required this.icon,
     required this.iconColor,
     this.isRead = false,
+    this.requestId,
     this.requestType,
     this.senderName,
     this.senderRole,
@@ -89,6 +97,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   final Set<String> _selectedIds = {};
 
   late List<NotificationItem> _notifications;
+  String? _loadedUserId;
+  String? _loadError;
 
   @override
   void initState() {
@@ -96,7 +106,22 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     // Chỉ dùng API thật; khởi rỗng để hiện empty state khi API chưa về/rỗng.
     _notifications = [];
     _syncUnreadCount();
-    _fetchNotifications();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final uid = UserScope.currentUser(context)?.id ?? '';
+    if (_loadedUserId != uid) {
+      _loadedUserId = uid;
+      _fetchNotifications();
+    }
+  }
+
+  /// Thông báo gửi đích danh chỉ hiện khi lọc theo đúng nhân sự đang đăng nhập.
+  String? get _employeeId {
+    final uid = UserScope.currentUser(context)?.id ?? '';
+    return uid.isEmpty ? null : uid;
   }
 
   String? _rawString(Map<String, dynamic> raw, List<String> keys) {
@@ -109,11 +134,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Future<void> _fetchNotifications() async {
     try {
-      final list = await _repo.getNotifications();
+      final employeeId = _employeeId;
+      final list = await _repo.getNotifications(employeeId: employeeId);
       // Đọc raw để giữ các trường mở rộng (requestType/sender/shift*) nếu API có.
       Map<String, Map<String, dynamic>> rawById = {};
       try {
-        final raw = await _repo.api.getJson('/api/notifications');
+        final raw = await _repo.api.getJson('/api/notifications', query: {
+          if (employeeId != null) 'employeeId': employeeId,
+        });
         if (raw is List) {
           for (final e in raw.whereType<Map>()) {
             final m = e.cast<String, dynamic>();
@@ -129,20 +157,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           final Map<String, dynamic> metaMap =
               meta is Map ? meta.cast<String, dynamic>() : const <String, dynamic>{};
 
-          // 1. Ưu tiên metadata trực tiếp từ API.
+          // Chỉ nhận loại yêu cầu do backend gắn tường minh. Không suy đoán từ
+          // title/body: thông báo duyệt đơn cũng chứa chữ "làm thay/đổi ca" nên
+          // suy đoán sẽ biến chúng thành thẻ phản hồi ca sai.
           String? requestType = _rawString({...raw, ...metaMap}, [
             'requestType',
             'request_type',
             'shiftRequestType',
           ]);
-          final typeHint = _rawString({...raw, ...metaMap}, ['type'])?.toLowerCase();
-          if (requestType == null && typeHint != null) {
-            if (typeHint.contains('swap') || typeHint.contains('đổi')) {
-              requestType = 'swap';
-            } else if (typeHint.contains('cover') || typeHint.contains('làm thay')) {
-              requestType = 'cover';
-            }
-          }
           if (requestType != null) {
             final v = requestType.toLowerCase();
             if (v.contains('swap')) {
@@ -154,18 +176,22 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             }
           }
 
-          // 2. Suy từ title/body chỉ khi có tín hiệu rõ ràng đổi ca / làm thay.
-          if (requestType == null) {
-            final t = '${m.title} ${m.body}'.toLowerCase();
-            if (t.contains('đổi ca')) {
-              requestType = 'swap';
-            } else if (t.contains('làm thay')) {
-              requestType = 'cover';
-            } else {
-              // API chỉ có title/body thường → thông báo thường, không mở detail ca.
-              requestType = null;
+          // id đơn từ thật nằm trong metadata; thiếu nó thì không mở màn phản hồi.
+          final String? requestId =
+              _rawString({...raw, ...metaMap}, ['requestId', 'request_id']);
+          final String? statusRaw = _rawString(
+            {...raw, ...metaMap},
+            ['requestStatus', 'request_status'],
+          )?.toLowerCase();
+          ShiftRequestStatus requestStatus = ShiftRequestStatus.pending;
+          if (statusRaw != null) {
+            if (statusRaw.contains('reject') || statusRaw.contains('từ chối')) {
+              requestStatus = ShiftRequestStatus.rejected;
+            } else if (statusRaw.contains('approv') || statusRaw.contains('accept') || statusRaw.contains('chấp nhận')) {
+              requestStatus = ShiftRequestStatus.accepted;
             }
           }
+          if ((requestId ?? '').isEmpty) requestType = null;
 
           final bool isReq = requestType != null;
           return NotificationItem(
@@ -182,6 +208,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ? (requestType == 'swap' ? AppColors.primary : Colors.orange)
                 : Colors.blue,
             isRead: m.isRead,
+            requestId: requestId,
+            requestStatus: requestStatus,
             requestType: requestType,
             senderName: _rawString({...raw, ...metaMap}, ['senderName', 'sender', 'employeeName']),
             senderRole: _rawString({...raw, ...metaMap}, ['senderRole', 'role']),
@@ -203,11 +231,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         }).toList();
         setState(() {
           _notifications = remoteItems;
+          _loadError = null;
         });
         _syncUnreadCount();
       }
-    } catch (_) {
-      // API lỗi thì giữ nguyên danh sách hiện tại (rỗng) để hiện empty state.
+    } catch (e) {
+      // Không hiện "đã dọn sạch" khi thực chất là gọi API thất bại.
+      if (mounted) setState(() => _loadError = e is ApiException ? e.message : 'Không tải được thông báo');
     }
   }
 
@@ -218,16 +248,36 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   // ── Actions ─────────────────────────────────────────────────────────────────
 
-  void _markAllAsRead() {
+  String _errorText(Object e) =>
+      e is ApiException ? e.message : 'Không kết nối được máy chủ, vui lòng thử lại.';
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.error,
+        content: Text('❌ $message'),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  Future<void> _markAllAsRead() async {
+    final unread = _notifications.where((n) => !n.isRead).toList();
+    if (unread.isEmpty) return;
+    try {
+      await _repo.markAllRead();
+    } catch (e) {
+      _showError(_errorText(e));
+      return;
+    }
+    if (!mounted) return;
     setState(() {
       for (var item in _notifications) {
         item.isRead = true;
       }
     });
     _syncUnreadCount();
-    for (var item in _notifications) {
-      _repo.markRead(item.id).catchError((_) {});
-    }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         backgroundColor: Colors.green,
@@ -254,14 +304,32 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     });
   }
 
-  void _markSelectedAsRead() {
+  /// Gọi từng id, không để một lỗi chặn các id còn lại.
+  Future<({Set<String> done, Object? error})> _runPerId(
+    Iterable<String> ids,
+    Future<void> Function(String) action,
+  ) async {
+    final done = <String>{};
+    Object? error;
+    await Future.wait(ids.map((id) async {
+      try {
+        await action(id);
+        done.add(id);
+      } catch (e) {
+        error ??= e;
+      }
+    }));
+    return (done: done, error: error);
+  }
+
+  Future<void> _markSelectedAsRead() async {
     if (_selectedIds.isEmpty) return;
-    for (final id in _selectedIds) {
-      _repo.markRead(id).catchError((_) {});
-    }
+    final ids = _selectedIds.toList();
+    final result = await _runPerId(ids, _repo.markRead);
+    if (!mounted) return;
     setState(() {
       for (var item in _notifications) {
-        if (_selectedIds.contains(item.id)) {
+        if (result.done.contains(item.id)) {
           item.isRead = true;
         }
       }
@@ -269,6 +337,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       _selectedIds.clear();
     });
     _syncUnreadCount();
+    if (result.error != null) {
+      _showError(
+        'Chỉ đánh dấu đã đọc được ${result.done.length}/${ids.length} thông báo. ${_errorText(result.error!)}',
+      );
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         backgroundColor: Colors.green,
@@ -283,31 +357,37 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final count = _selectedIds.length;
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Xoá thông báo', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
         content: Text('Bạn có chắc chắn muốn xoá $count thông báo đã chọn?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Huỷ'),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              for (final id in _selectedIds) {
-                _repo.deleteNotification(id).catchError((_) {});
-              }
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              final ids = _selectedIds.toList();
+              final result = await _runPerId(ids, _repo.deleteNotification);
+              if (!mounted) return;
               setState(() {
-                _notifications.removeWhere((n) => _selectedIds.contains(n.id));
+                _notifications.removeWhere((n) => result.done.contains(n.id));
                 _isSelecting = false;
                 _selectedIds.clear();
               });
               _syncUnreadCount();
+              if (result.error != null) {
+                _showError(
+                  'Chỉ xoá được ${result.done.length}/${ids.length} thông báo. ${_errorText(result.error!)}',
+                );
+                return;
+              }
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   backgroundColor: AppColors.error,
-                  content: Text('🗑️ Đã xoá $count thông báo'),
+                  content: Text('🗑️ Đã xoá ${result.done.length} thông báo'),
                   duration: const Duration(seconds: 2),
                 ),
               );
@@ -324,55 +404,68 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  void _deleteSingle(NotificationItem item) {
-    _repo.deleteNotification(item.id).catchError((_) {});
+  Future<void> _deleteSingle(NotificationItem item) async {
     final index = _notifications.indexOf(item);
+    // Dismissible yêu cầu bỏ item khỏi danh sách ngay; trả lại chỗ cũ nếu API lỗi.
     setState(() {
       _notifications.remove(item);
     });
     _syncUnreadCount();
+    try {
+      await _repo.deleteNotification(item.id);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _notifications.insert(index.clamp(0, _notifications.length), item);
+      });
+      _syncUnreadCount();
+      _showError(_errorText(e));
+      return;
+    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: AppColors.textPrimary,
         content: Text('🗑️ Đã xoá "${item.title}"'),
-        action: SnackBarAction(
-          label: 'Hoàn tác',
-          textColor: Colors.amber,
-          onPressed: () {
-            setState(() {
-              _notifications.insert(index, item);
-            });
-            _syncUnreadCount();
-          },
-        ),
         duration: const Duration(seconds: 3),
       ),
     );
   }
 
   Future<void> _openRequestDetail(NotificationItem item) async {
-    _repo.markRead(item.id).catchError((_) {});
-    setState(() => item.isRead = true);
-    _syncUnreadCount();
+    final requestId = item.requestId;
+    if (requestId == null || requestId.isEmpty) {
+      await _showNotificationDetail(item);
+      return;
+    }
+    try {
+      await _repo.markRead(item.id);
+      if (!mounted) return;
+      setState(() => item.isRead = true);
+      _syncUnreadCount();
+    } catch (e) {
+      _showError(_errorText(e));
+    }
+    if (!mounted) return;
 
     final result = await Navigator.push<ShiftRequestStatus>(
       context,
       MaterialPageRoute(
         builder: (context) => ShiftRequestDetailScreen(
-          requestId: item.id,
+          requestId: requestId,
           title: item.title,
-          senderName: item.senderName ?? 'Đồng nghiệp',
-          senderRole: item.senderRole ?? 'Nhân viên',
+          senderName: item.senderName ?? '—',
+          senderRole: item.senderRole ?? '',
           senderPhone: item.senderPhone ?? '',
           requestType: item.requestType ?? 'cover',
           requestTime: item.time,
-          shiftName: item.shiftName ?? 'Ca làm việc',
+          shiftName: item.shiftName ?? '—',
           shiftTime: item.shiftTime ?? '—',
-          shiftHours: item.shiftHours ?? '—',
+          shiftHours: item.shiftHours ?? '',
           shiftDate: item.shiftDate ?? '—',
           branch: item.branch ?? BranchScope.label(context),
-          shiftRole: item.shiftRole ?? 'Nhân viên',
+          shiftRole: item.shiftRole ?? '',
           swapShiftName: item.swapShiftName,
           swapShiftTime: item.swapShiftTime,
           swapShiftHours: item.swapShiftHours,
@@ -397,10 +490,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  void _showNotificationDetail(NotificationItem item) {
-    _repo.markRead(item.id).catchError((_) {});
-    setState(() => item.isRead = true);
-    _syncUnreadCount();
+  Future<void> _showNotificationDetail(NotificationItem item) async {
+    try {
+      await _repo.markRead(item.id);
+      if (!mounted) return;
+      setState(() => item.isRead = true);
+      _syncUnreadCount();
+    } catch (e) {
+      _showError(_errorText(e));
+    }
+    if (!mounted) return;
 
     showModalBottomSheet(
       context: context,
@@ -450,7 +549,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               item.content,
               style: const TextStyle(fontSize: 14, height: 1.5, color: AppColors.textPrimary),
             ),
-            if (item.requestType != null && item.requestType!.isNotEmpty) ...[
+            if (item.isShiftRequest) ...[
               const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
@@ -528,16 +627,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        FaIcon(FontAwesomeIcons.bellSlash, size: 64, color: Colors.grey.shade400),
+                        FaIcon(
+                          _loadError != null ? FontAwesomeIcons.triangleExclamation : FontAwesomeIcons.bellSlash,
+                          size: 64,
+                          color: _loadError != null ? AppColors.error : Colors.grey.shade400,
+                        ),
                         const SizedBox(height: 12),
-                        const Text(
-                          'Không có thông báo nào',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
+                        Text(
+                          _loadError ?? 'Không có thông báo nào',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
                         ),
                         const SizedBox(height: 4),
-                        const Text(
-                          'Tất cả thông báo đã được dọn sạch.',
-                          style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                        Text(
+                          _loadError != null ? 'Kéo xuống để thử lại.' : 'Tất cả thông báo đã được dọn sạch.',
+                          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                         ),
                       ],
                     ),
@@ -718,7 +822,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               }
             });
           } else {
-            if (item.requestType != null && item.requestType!.isNotEmpty) {
+            if (item.isShiftRequest) {
               _openRequestDetail(item);
             } else {
               _showNotificationDetail(item);
@@ -835,7 +939,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                               item.time,
                               style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                             ),
-                            if (item.requestType != null && item.requestType!.isNotEmpty) ...[
+                            if (item.isShiftRequest) ...[
                               const SizedBox(width: 8),
                               _buildRequestStatusBadge(item.requestStatus),
                             ],

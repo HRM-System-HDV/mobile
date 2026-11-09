@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
 import '../approvals/approval_repository.dart';
 
@@ -43,19 +44,19 @@ class ShiftRequestDetailScreen extends StatefulWidget {
     required this.senderRole,
     this.senderPhone = '',
     this.requestType = 'cover',
-    this.requestTime = '25 phút trước',
+    this.requestTime = '',
     required this.shiftName,
     required this.shiftTime,
-    this.shiftHours = '5.0 giờ',
+    this.shiftHours = '',
     required this.shiftDate,
     required this.branch,
-    this.shiftRole = 'Thu ngân',
+    this.shiftRole = '',
     this.swapShiftName,
     this.swapShiftTime,
-    this.swapShiftHours = '5.0 giờ',
+    this.swapShiftHours,
     this.swapShiftDate,
     this.swapShiftBranch,
-    this.swapShiftRole = 'Phục vụ',
+    this.swapShiftRole,
     required this.reason,
     this.initialStatus = ShiftRequestStatus.pending,
     this.onStatusChanged,
@@ -74,12 +75,20 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
     _status = widget.initialStatus;
   }
 
-  void _handleResponse(ShiftRequestStatus newStatus) {
-    if (newStatus == ShiftRequestStatus.accepted) {
-      ApprovalRepository().approve(widget.requestId).catchError((_) {});
-    } else if (newStatus == ShiftRequestStatus.rejected) {
-      ApprovalRepository().reject(widget.requestId).catchError((_) {});
+  Future<void> _handleResponse(ShiftRequestStatus newStatus) async {
+    try {
+      await ApprovalRepository().respond(
+        widget.requestId,
+        accept: newStatus == ShiftRequestStatus.accepted,
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(backgroundColor: AppColors.error, content: Text('❌ ${e.message}')),
+      );
+      return;
     }
+    if (!mounted) return;
     setState(() => _status = newStatus);
     if (widget.onStatusChanged != null) {
       widget.onStatusChanged!(newStatus);
@@ -225,13 +234,14 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
                   _divider(),
                   _buildInfoRow(FontAwesomeIcons.clock, 'Khung giờ ca', widget.shiftTime),
                   _divider(),
-                  _buildInfoRow(FontAwesomeIcons.stopwatch, 'Số giờ làm việc', widget.shiftHours),
+                  _buildInfoRow(FontAwesomeIcons.stopwatch, 'Số giờ làm việc', widget.shiftHours.isEmpty ? '—' : widget.shiftHours),
                   _divider(),
                   _buildInfoRow(FontAwesomeIcons.store, 'Chi nhánh', widget.branch),
                   _divider(),
-                  _buildInfoRow(FontAwesomeIcons.idCard, 'Vị trí công việc', widget.shiftRole),
+                  _buildInfoRow(FontAwesomeIcons.idCard, 'Vị trí công việc', widget.shiftRole.isEmpty ? '—' : widget.shiftRole),
                   _divider(),
-                  _buildInfoRow(FontAwesomeIcons.user, 'Người gửi yêu cầu', '${widget.senderName} (${widget.senderRole})',
+                  _buildInfoRow(FontAwesomeIcons.user, 'Người gửi yêu cầu',
+                      widget.senderRole.isEmpty ? widget.senderName : '${widget.senderName} (${widget.senderRole})',
                       valueColor: AppColors.primary),
                   _divider(),
                   _buildInfoRow(FontAwesomeIcons.phone, 'Số điện thoại',

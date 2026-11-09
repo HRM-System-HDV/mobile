@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
 import '../leave_request/leave_repository.dart';
+import '../schedule/shift_repository.dart';
 
 class AdjustmentItem {
   final String id;
@@ -36,45 +38,109 @@ class AttendanceAdjustmentScreen extends StatefulWidget {
 class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen> {
   bool _isLoading = false;
   final List<AdjustmentItem> _items = [];
+  List<Map<String, dynamic>> _templates = [];
+  String? _loadError;
+  String? _lastUserId;
 
   @override
-  void initState() {
-    super.initState();
-    _loadData();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final uid = UserScope.currentUser(context)?.id;
+    if (_lastUserId != uid) {
+      _lastUserId = uid;
+      _loadData();
+    }
   }
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
+    final uid = UserScope.currentUser(context)?.id;
+
+    // Ca mẫu do quản lý tạo; danh sách yêu cầu vẫn tải được dù bước này lỗi.
+    List<Map<String, dynamic>> templates = _templates;
+    String? templateError;
     try {
-      final requests = await LeaveRepository().getRequests();
+      templates = await ShiftRepository().getTemplates();
+    } catch (e) {
+      templateError = e is ApiException ? e.message : 'Không tải được danh sách ca mẫu';
+    }
+
+    try {
+      final requests = await LeaveRepository().getRequests(employeeId: uid);
       final supps = requests.where((r) => r.type == 'work_supplement').toList();
       if (mounted) {
         setState(() {
+          _templates = templates;
           _items.clear();
           for (final r in supps) {
+            // Giờ vào/ra thật nằm trong content: 'Vào: HH:mm, Ra: HH:mm. Lý do: ...'
+            final inMatch = RegExp(r'Vào:\s*([^,.]+)').firstMatch(r.content);
+            final outMatch = RegExp(r'Ra:\s*([^,.]+)').firstMatch(r.content);
+            final reasonMatch = RegExp(r'Lý do:\s*(.*)', dotAll: true).firstMatch(r.content);
             _items.add(AdjustmentItem(
               id: r.id,
               date: r.createdAt != null && r.createdAt!.length >= 10
                   ? r.createdAt!.substring(0, 10)
-                  : 'Hôm nay',
+                  : '—',
               shiftName: r.title,
-              checkIn: '--:--',
-              checkOut: '--:--',
-              reason: r.content,
+              checkIn: inMatch != null ? inMatch.group(1)!.trim() : '—',
+              checkOut: outMatch != null ? outMatch.group(1)!.trim() : '—',
+              reason: reasonMatch != null ? reasonMatch.group(1)!.trim() : r.content,
               status: r.status,
               createdAt: r.createdAt ?? '',
             ));
           }
+          _loadError = templateError;
         });
       }
-    } catch (_) {}
-    if (mounted) setState(() => _isLoading = false);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _templates = templates;
+          _loadError = e is ApiException ? e.message : 'Không tải được danh sách yêu cầu';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.error,
+        content: Text('❌ $message'),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+
   void _showCreateModal() {
-    String selectedShift = 'Ca Sáng (08:00 - 12:00)';
-    final inController = TextEditingController(text: '08:00');
-    final outController = TextEditingController(text: '12:00');
+    // Tên và giờ ca phải lấy từ ca mẫu thật, không bịa sẵn.
+    final names = _templates
+        .map((t) => t['name']?.toString() ?? '')
+        .where((n) => n.isNotEmpty)
+        .toSet()
+        .toList();
+    if (names.isEmpty) {
+      _showError('Chưa có ca mẫu trên hệ thống. Quản lý cần tạo ca trước khi bổ sung công.');
+      return;
+    }
+    String selectedShift = names.first;
+    String labelFor(String name) {
+      final t = _templates.firstWhere(
+        (t) => (t['name']?.toString() ?? '') == name,
+        orElse: () => const <String, dynamic>{},
+      );
+      final start = t['startTime']?.toString() ?? '';
+      final end = t['endTime']?.toString() ?? '';
+      return start.isNotEmpty && end.isNotEmpty ? '$name ($start - $end)' : name;
+    }
+
+    final inController = TextEditingController();
+    final outController = TextEditingController();
     final reasonController = TextEditingController();
 
     showModalBottomSheet(
@@ -116,8 +182,11 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
               ),
-              items: ['Ca Sáng (08:00 - 12:00)', 'Ca Chiều (12:00 - 18:00)', 'Ca Tối (18:00 - 22:30)']
-                  .map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 14))))
+              items: names
+                  .map((name) => DropdownMenuItem(
+                        value: name,
+                        child: Text(labelFor(name), style: const TextStyle(fontSize: 14)),
+                      ))
                   .toList(),
               onChanged: (val) => selectedShift = val!,
             ),
@@ -177,20 +246,28 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
             ElevatedButton(
               onPressed: () async {
                 final reason = reasonController.text.trim();
+                final inTime = inController.text.trim();
+                final outTime = outController.text.trim();
                 if (reason.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Vui lòng nhập lý do giải trình')),
-                  );
+                  _showError('Vui lòng nhập lý do giải trình');
+                  return;
+                }
+                final hhmm = RegExp(r'^\d{1,2}:\d{2}$');
+                if (!hhmm.hasMatch(inTime) || !hhmm.hasMatch(outTime)) {
+                  _showError('Nhập giờ vào/ra đúng định dạng HH:mm');
                   return;
                 }
                 final user = UserScope.currentUser(context);
                 final empId = user?.id ?? '';
-                if (empId.isEmpty) return;
+                if (empId.isEmpty) {
+                  _showError('Không xác định được nhân sự đang đăng nhập');
+                  return;
+                }
                 try {
                   await LeaveRepository().createRequest({
                     'type': 'work_supplement',
                     'title': 'Bổ sung chấm công: $selectedShift',
-                    'content': 'Vào: ${inController.text.trim()}, Ra: ${outController.text.trim()}. Lý do: $reason',
+                    'content': 'Vào: $inTime, Ra: $outTime. Lý do: $reason',
                     'employeeId': empId,
                   });
                   if (modalCtx.mounted) {
@@ -205,13 +282,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                   );
                   _loadData();
                 } catch (e) {
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      backgroundColor: AppColors.error,
-                      content: Text('❌ Gửi yêu cầu thất bại: $e'),
-                    ),
-                  );
+                  _showError('Gửi yêu cầu thất bại: ${e is ApiException ? e.message : e}');
                 }
               },
               style: ElevatedButton.styleFrom(
@@ -281,11 +352,29 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
               Container(
                 padding: const EdgeInsets.symmetric(vertical: 36),
                 alignment: Alignment.center,
-                child: const Column(
+                child: Column(
                   children: [
-                    FaIcon(FontAwesomeIcons.clockRotateLeft, size: 36, color: Colors.grey),
-                    SizedBox(height: 10),
-                    Text('Chưa có yêu cầu bổ sung công nào', style: TextStyle(color: AppColors.textSecondary, fontSize: 13.5)),
+                    FaIcon(
+                      _loadError != null ? FontAwesomeIcons.cloudBolt : FontAwesomeIcons.clockRotateLeft,
+                      size: 36,
+                      color: _loadError != null ? AppColors.error : Colors.grey,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      _loadError ?? 'Chưa có yêu cầu bổ sung công nào',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: _loadError != null ? AppColors.error : AppColors.textSecondary,
+                        fontSize: 13.5,
+                      ),
+                    ),
+                    if (_loadError != null) ...[
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Kéo xuống để thử lại.',
+                        style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                      ),
+                    ],
                   ],
                 ),
               )

@@ -7,16 +7,37 @@ import '../attendance/adjustment.dart';
 import 'shift_repository.dart';
 import 'general.dart';
 
+/// Giờ công chỉ tính được khi có cả giờ vào và giờ ra thật.
+double? _workedHours(String checkIn, String checkOut) {
+  int? toMinutes(String t) {
+    final p = t.split(':');
+    if (p.length != 2) return null;
+    final h = int.tryParse(p[0]);
+    final m = int.tryParse(p[1]);
+    if (h == null || m == null) return null;
+    return h * 60 + m;
+  }
+
+  final start = toMinutes(checkIn);
+  final end = toMinutes(checkOut);
+  if (start == null || end == null) return null;
+  var diff = end - start;
+  if (diff < 0) diff += 1440;
+  return diff / 60;
+}
+
 class StaffGeneralShiftDetailScreen extends StatelessWidget {
   final StaffInShift staff;
   final GeneralShiftModel shift;
   final GeneralDayModel day;
+  final int gracePeriodMinutes;
 
   const StaffGeneralShiftDetailScreen({
     super.key,
     required this.staff,
     required this.shift,
     required this.day,
+    this.gracePeriodMinutes = 5,
   });
 
   @override
@@ -24,7 +45,31 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
     final isNotYet = staff.checkInStatus == 'not_yet';
     final isCheckedIn = staff.checkInStatus == 'checked_in';
     final isInProgress = staff.checkInStatus == 'in_progress';
-    final isForgot = isNotYet && !day.isToday;
+
+    // Quên chấm công: Chưa chấm công mà ngày đã qua, HOẶC hôm nay đã qua giờ bắt đầu ca
+    final isForgot = isNotYet && (() {
+      if (shift.status == 'completed') return true;
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final dateParts = day.date.split('/');
+      final dayD = int.tryParse(dateParts[0]) ?? 1;
+      final monthD = dateParts.length > 1 ? (int.tryParse(dateParts[1]) ?? 1) : 1;
+      final yearD = now.year;
+      final dayDate = DateTime(yearD, monthD, dayD);
+      if (dayDate.isBefore(today)) return true;
+      if (dayDate.isAfter(today)) return false;
+
+      // Hôm nay: kiểm tra đã qua giờ bắt đầu ca chưa
+      final startStr = shift.timeRange.split('-')[0].trim();
+      final partsStart = startStr.split(':');
+      if (partsStart.length < 2) return false;
+      final sh = int.tryParse(partsStart[0]) ?? 0;
+      final sm = int.tryParse(partsStart[1]) ?? 0;
+      final nowMinutes = now.hour * 60 + now.minute;
+      final startMinutes = sh * 60 + sm;
+      return nowMinutes >= startMinutes;
+    })();
+
     bool isLate = false;
     if (isCheckedIn) {
       final startStr = shift.timeRange.split('-')[0].trim();
@@ -35,7 +80,7 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
         final sm = int.tryParse(partsStart[1]) ?? 0;
         final ch = int.tryParse(partsCheck[0]) ?? 0;
         final cm = int.tryParse(partsCheck[1]) ?? 0;
-        isLate = ch * 60 + cm - (sh * 60 + sm) > 5;
+        isLate = ch * 60 + cm - (sh * 60 + sm) > gracePeriodMinutes;
       }
     }
 
@@ -55,9 +100,14 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
       statusColor = Colors.grey;
     }
 
-    final checkIn = staff.checkInTime.isNotEmpty ? staff.checkInTime : (isNotYet ? 'Chưa chấm công' : '--:--');
-    final checkOut = isNotYet ? 'Chưa chấm công' : '--:--';
-    final hours = isCheckedIn ? '4.0 giờ' : isInProgress ? 'Đang tính...' : '0.0 giờ';
+    final checkIn = staff.checkInTime.isNotEmpty ? staff.checkInTime : 'Chưa chấm công';
+    final checkOut = staff.checkOutTime.isNotEmpty
+        ? staff.checkOutTime
+        : (isNotYet ? 'Chưa chấm công' : 'Chưa chấm công ra');
+    final worked = _workedHours(staff.checkInTime, staff.checkOutTime);
+    final hours = worked == null
+        ? '—'
+        : '${worked.toStringAsFixed(1)} giờ';
 
     // Phân quyền theo tài khoản người dùng đang đăng nhập:
     // - Admin hoặc Manager: có toàn quyền xem và quản lý ca (Hủy ca, Chấm công) của mọi nhân viên.

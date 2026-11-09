@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
 import '../attendance/attendance_repository.dart';
 import '../attendance/adjustment.dart';
@@ -26,26 +27,40 @@ class ShiftDetailScreen extends StatefulWidget {
 class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
   String? _realCheckIn;
   String? _realCheckOut;
+  double? _realPenalty;
+  String? _loadError;
+  String? _loadedKey;
 
   @override
-  void initState() {
-    super.initState();
-    _loadAttendance();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final key = '${UserScope.currentUser(context)?.id}:${widget.shift.id}';
+    if (_loadedKey != key) {
+      _loadedKey = key;
+      _loadAttendance();
+    }
   }
 
   Future<void> _loadAttendance() async {
+    // Chỉ đọc chấm công của chính người đăng nhập để không hiện giờ công của đồng nghiệp.
+    final uid = UserScope.currentUser(context)?.id;
     try {
-      final records = await AttendanceRepository().getAttendance();
-      if (records.isNotEmpty && mounted) {
-        final match = records.where((r) => r.shiftId == widget.shift.id || r.shiftId == widget.shift.shiftName).firstOrNull;
-        if (match != null) {
-          setState(() {
-            _realCheckIn = match.checkIn;
-            _realCheckOut = match.checkOut;
-          });
-        }
+      final records = await AttendanceRepository().getAttendance(employeeId: uid);
+      if (!mounted) return;
+      final match = records.where((r) => r.shiftId == widget.shift.id || r.shiftId == widget.shift.shiftName).firstOrNull;
+      setState(() {
+        _realCheckIn = match?.checkIn;
+        _realCheckOut = match?.checkOut;
+        _realPenalty = match?.penaltyAmount;
+        _loadError = null;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loadError = e is ApiException ? e.message : 'Không kết nối được máy chủ';
+        });
       }
-    } catch (_) {}
+    }
   }
 
   void _navigateToForm(ShiftActionType type) {
@@ -73,18 +88,24 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
     // Khi chưa có dữ liệu thật thì hiển thị '—' (chưa chấm công), không dùng giờ mẫu.
     final String checkIn = _realCheckIn ?? '—';
     final String checkOut = _realCheckOut ?? '—';
-    final String tongGioTinhCong = shift.status == 'completed'
-        ? '${shift.hours} giờ'
-        : (shift.status == 'active'
-            ? 'Đang tính...'
-            : (shift.status == 'missed' ? '0.0 giờ' : '--'));
-    final String nguonCong = (shift.status == 'upcoming' || shift.status == 'missed')
-        ? 'Phân công (Quản lý)'
-        : 'Hệ thống tự động';
+    String tongGioTinhCong = '—';
+    if (_realCheckIn != null && _realCheckOut != null) {
+      final pIn = _realCheckIn!.split(':');
+      final pOut = _realCheckOut!.split(':');
+      if (pIn.length == 2 && pOut.length == 2) {
+        final mIn = (int.tryParse(pIn[0]) ?? 0) * 60 + (int.tryParse(pIn[1]) ?? 0);
+        final mOut = (int.tryParse(pOut[0]) ?? 0) * 60 + (int.tryParse(pOut[1]) ?? 0);
+        if (mOut > mIn) {
+          tongGioTinhCong = '${((mOut - mIn) / 60.0).toStringAsFixed(1)} giờ';
+        }
+      }
+    }
+    // API chấm công chưa trả trường nguồn công.
+    const String nguonCong = '—';
 
     final user = UserScope.currentUser(context);
     final bool isHourly = user?.isHourlySalary ?? true;
-    final double hourlySalary = user?.hourlySalary ?? 35000.0;
+    final double? hourlySalary = user?.hourlySalary;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -171,6 +192,21 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
               style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
             ),
             const SizedBox(height: 10),
+            if (_loadError != null) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.error.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  'Không tải được dữ liệu chấm công: $_loadError',
+                  style: const TextStyle(fontSize: 12.5, color: AppColors.error),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
             Container(
               padding: const EdgeInsets.symmetric(vertical: 4),
               decoration: BoxDecoration(
@@ -203,22 +239,24 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
                     _buildInfoRow(
                       FontAwesomeIcons.moneyBillWave,
                       'Cơ chế tính lương',
-                      isHourly ? 'Theo giờ (${_formatCurrency(hourlySalary)} ₫/h)' : 'Lương cơ bản tháng',
+                      isHourly
+                          ? 'Theo giờ (${hourlySalary != null && hourlySalary > 0 ? _formatCurrency(hourlySalary) : '—'} ₫/h)'
+                          : 'Lương cơ bản tháng',
                     ),
                     _divider(),
                     if (isHourly)
+                      // API chấm công không trả thu nhập từng ca nên không tự tính tiền công.
                       _buildInfoRow(
                         FontAwesomeIcons.circleDollarToSlot,
                         'Thu nhập ca cộng vào',
-                        '+${_formatCurrency((shift.hours > 0 ? shift.hours : 5.0) * hourlySalary)} ₫',
-                        valueColor: AppColors.success,
+                        '—',
                       )
                     else
                       _buildInfoRow(
                         FontAwesomeIcons.circleExclamation,
                         'Khấu trừ phạt ca',
-                        '0 ₫ (Không bị phạt)',
-                        valueColor: Colors.green.shade700,
+                        _realPenalty != null ? '${_formatCurrency(_realPenalty!)} ₫' : '—',
+                        valueColor: _realPenalty != null && _realPenalty! > 0 ? Colors.red.shade700 : null,
                       ),
                   ],
                 ],

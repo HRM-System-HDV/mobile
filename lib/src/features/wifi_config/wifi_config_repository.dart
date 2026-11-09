@@ -77,4 +77,10 @@ class WifiConfigRepository {
   Future<void> deleteWifiConfig(String id) async {
     await api.delete('/api/wifi-configs/$id');
   }
+
+  /// SSID thật mà máy chủ on-premises đang lưu; không có BSSID/cường độ sóng.
+  Future<List<Map<String, dynamic>>> scanNearbyWifi() async {
+    final res = await api.getJson('/api/wifi-configs/scan');
+    return res is List ? res.whereType<Map<String, dynamic>>().toList() : [];
+  }
 }

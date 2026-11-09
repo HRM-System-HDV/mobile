@@ -38,6 +38,18 @@ class AttendanceRepository {
     return AttendanceModel.fromJson(data);
   }
 
+  Future<Map<String, dynamic>> getConfig() async {
+    try {
+      final res = await api.getJson('/api/attendance/config');
+      if (res is Map<String, dynamic>) {
+        final d = res['data'];
+        if (d is Map<String, dynamic>) return d;
+        return res;
+      }
+    } catch (_) {}
+    return {};
+  }
+
   Future<List<AttendanceModel>> getAttendance({
     String? employeeId,
     String? date,

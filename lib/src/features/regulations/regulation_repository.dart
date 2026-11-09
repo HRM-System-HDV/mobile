@@ -12,6 +12,7 @@ class RegulationModel {
   final String effectiveDate;
   final String author;
   final String version;
+  final bool pinned;
 
   const RegulationModel({
     required this.id,
@@ -25,6 +26,7 @@ class RegulationModel {
     required this.effectiveDate,
     required this.author,
     required this.version,
+    this.pinned = false,
   });
 
   factory RegulationModel.fromJson(Map<String, dynamic> j) => RegulationModel(
@@ -39,6 +41,7 @@ class RegulationModel {
         effectiveDate: j['effectiveDate']?.toString() ?? '',
         author: j['author']?.toString() ?? '',
         version: j['version']?.toString() ?? '1.0',
+        pinned: j['pinned'] == true,
       );
 }
 
@@ -54,5 +57,33 @@ class RegulationRepository {
         .whereType<Map<String, dynamic>>()
         .map(RegulationModel.fromJson)
         .toList();
+  }
+
+  Future<RegulationModel> createRegulation({
+    required String title,
+    required String category,
+    required String content,
+    String? summary,
+    String? scope,
+    String? author,
+    String? status,
+    String? effectiveDate,
+    String? version,
+    bool pinned = false,
+  }) async {
+    final payload = {
+      'title': title,
+      'category': category,
+      'content': content,
+      'summary': summary ?? (content.length > 90 ? '${content.substring(0, 90)}...' : content),
+      'scope': scope ?? 'Toàn công ty',
+      'status': status ?? 'hiệu lực',
+      if (effectiveDate != null && effectiveDate.isNotEmpty) 'effectiveDate': effectiveDate,
+      if (version != null && version.isNotEmpty) 'version': version,
+      'pinned': pinned,
+      if (author != null && author.isNotEmpty) 'author': author,
+    };
+    final data = await api.postJson('/api/regulations', payload);
+    return RegulationModel.fromJson(data is Map<String, dynamic> ? data : {});
   }
 }

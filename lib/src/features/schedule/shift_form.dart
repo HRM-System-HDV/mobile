@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
 import '../leave_request/leave_repository.dart';
 import '../profile/employee_repository.dart';
@@ -18,15 +19,17 @@ class ShiftStaffMember {
   final String name;
   final String role;
   final String phone;
+  final String shiftId;
 
   const ShiftStaffMember({
     required this.id,
     required this.name,
     required this.role,
     this.phone = '',
+    this.shiftId = '',
   });
 
-  String get displayName => '$name ($role)';
+  String get displayName => role.isEmpty ? name : '$name ($role)';
 }
 
 class ShiftActionFormScreen extends StatefulWidget {
@@ -52,6 +55,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
   final _reasonController = TextEditingController();
 
   // Nhờ làm thay — tải từ /api/employees, rỗng thì dropdown trống.
+  // Giữ id nhân viên, không giữ tên hiển thị (tên có thể trùng).
   String _selectedColleague = '';
   List<ShiftStaffMember> _colleagues = [];
 
@@ -104,7 +108,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
         final id = e['id']?.toString() ?? '';
         if (id.isEmpty) continue;
         nameById[id] = e['name']?.toString() ?? id;
-        roleById[id] = e['role']?.toString() ?? 'Nhân viên';
+        roleById[id] = e['role']?.toString() ?? '';
         phoneById[id] = e['phone']?.toString() ?? '';
       }
       final colleagues = emps
@@ -114,7 +118,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
             return ShiftStaffMember(
               id: id,
               name: nameById[id] ?? id,
-              role: roleById[id] ?? 'Nhân viên',
+              role: roleById[id] ?? '',
               phone: phoneById[id] ?? '',
             );
           })
@@ -123,9 +127,10 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
       for (final s in shifts) {
         if (s.date.trim().isEmpty) continue;
         final key = _toIsoKey(s.date);
-        final label = '${s.template} (${s.scheduledStart} - ${s.scheduledEnd})';
+        final label = '${s.displayTemplate} (${s.timeLabel})';
         final staff = ShiftStaffMember(
           id: s.employeeId ?? s.id,
+          shiftId: s.id,
           name: (s.employeeId != null && nameById.containsKey(s.employeeId))
               ? nameById[s.employeeId]!
               : 'Chưa phân công',
@@ -143,15 +148,19 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
       }
       setState(() {
         _colleagues = colleagues;
-        if (_selectedColleague.isEmpty && colleagues.isNotEmpty) {
-          _selectedColleague = colleagues.first.displayName;
-        }
         _scheduleShiftStaffData = grouped;
         _loadingRefs = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => _loadingRefs = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.error,
+          content: Text('❌ Không tải được danh sách nhân sự/ca: $e'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
     }
   }
 
@@ -269,33 +278,102 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
       return;
     }
 
+    final reason = _reasonController.text.trim();
+    final shiftLabel = '${widget.shift.shiftName} (${widget.shift.timeRange}) '
+        'ngày ${widget.date} tại ${widget.shift.branch}';
     String successMsg = '';
     String reqType = 'leave';
+    String title = '';
+    String content = '';
+    String? targetShiftId;
+    String? targetEmployeeId;
+    Map<String, dynamic>? notification;
+
+    Map<String, dynamic> baseNotification(String type) => {
+          'requestType': type,
+          'shiftName': widget.shift.shiftName,
+          'shiftDate': widget.date,
+          'shiftTime': widget.shift.timeRange,
+          'shiftHours': widget.shift.hours?.toString() ?? '',
+          'branch': widget.shift.branch,
+          'shiftRole': widget.shift.role,
+          'reason': reason,
+          'senderName': me.name,
+          'senderRole': me.roleTitle.isNotEmpty ? me.roleTitle : me.role,
+          'senderPhone': me.phone,
+        };
+
     switch (widget.actionType) {
       case ShiftActionType.cover:
+        final colleague = _colleagues.where((c) => c.id == _selectedColleague).toList();
+        if (colleague.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Vui lòng chọn đồng nghiệp nhận làm thay')),
+          );
+          return;
+        }
+        final person = colleague.first;
         reqType = 'overtime';
-        successMsg = '✅ Đã gửi lời nhờ làm thay tới $_selectedColleague!';
+        title = 'Nhờ làm thay: ${widget.shift.shiftName}';
+        successMsg = '✅ Đã gửi lời nhờ làm thay tới ${person.displayName}!';
+        targetEmployeeId = person.id;
+        notification = baseNotification('cover');
+        content = 'Nhờ ${person.displayName} (mã ${person.id}'
+            '${person.phone.isEmpty ? '' : ', SĐT ${person.phone}'}) làm thay ca.\n'
+            'Ca: $shiftLabel.\nLý do: $reason';
         break;
       case ShiftActionType.swap:
+        final staff = _selectedSwapStaff!;
+        if (staff.shiftId.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('❌ Ca muốn đổi không có mã trên hệ thống, vui lòng chọn ca khác')),
+          );
+          return;
+        }
         reqType = 'shift_swap';
-        successMsg = '✅ Đã gửi yêu cầu đổi ca tới ${_selectedSwapStaff?.displayName}!';
+        title = 'Đổi ca: ${widget.shift.shiftName}';
+        successMsg = '✅ Đã gửi yêu cầu đổi ca tới ${staff.displayName}!';
+        targetShiftId = staff.shiftId;
+        targetEmployeeId = staff.id;
+        final swapDateLabel = '${_swapDate!.day.toString().padLeft(2, '0')}/'
+            '${_swapDate!.month.toString().padLeft(2, '0')}/${_swapDate!.year}';
+        notification = {
+          ...baseNotification('swap'),
+          'swapShiftName': _selectedTargetShift ?? '',
+          'swapShiftDate': swapDateLabel,
+          'swapShiftBranch': widget.shift.branch,
+          'swapShiftRole': staff.role,
+        };
+        content = 'Xin đổi ca với ${staff.displayName} (mã ${staff.id}).\n'
+            'Ca của tôi: $shiftLabel.\n'
+            'Ca muốn nhận: $_selectedTargetShift ngày $swapDateLabel.\n'
+            'Lý do: $reason';
         break;
       case ShiftActionType.leave:
         reqType = 'leave';
+        title = 'Xin nghỉ ca: ${widget.shift.shiftName}';
         successMsg = '✅ Đã gửi đơn xin nghỉ ca tới Quản lý chi nhánh!';
+        content = 'Xin nghỉ ca: $shiftLabel.\n'
+            'Lý do: $_selectedLeaveReason.\nChi tiết: $reason';
         break;
     }
 
+    final messenger = ScaffoldMessenger.of(context);
     try {
       await LeaveRepository().createRequest({
         'type': reqType,
-        'title': '${widget.actionType == ShiftActionType.leave ? "Xin nghỉ ca" : (widget.actionType == ShiftActionType.cover ? "Nhờ làm thay" : "Đổi ca")}: ${widget.shift.shiftName}',
-        'content': _reasonController.text.trim(),
+        'title': title,
+        'content': content,
         'employeeId': me.id,
+        if (widget.shift.branch.isNotEmpty) 'branchSlug': widget.shift.branch,
+        if (widget.shift.id.isNotEmpty) 'sourceShiftId': widget.shift.id,
+        if (targetShiftId != null) 'targetShiftId': targetShiftId,
+        if (targetEmployeeId != null) 'targetEmployeeId': targetEmployeeId,
+        if (notification != null) 'notification': notification,
       });
       if (!mounted) return;
       Navigator.pop(context, true);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
           backgroundColor: AppColors.success,
           content: Text(successMsg),
@@ -304,10 +382,10 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
           backgroundColor: Colors.red,
-          content: Text('❌ Gửi yêu cầu thất bại: $e'),
+          content: Text('❌ Gửi yêu cầu thất bại: ${e is ApiException ? e.message : e}'),
           duration: const Duration(seconds: 3),
         ),
       );
@@ -490,9 +568,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
             isExpanded: true,
-            initialValue: _colleagues
-                    .map((c) => c.displayName)
-                    .contains(_selectedColleague)
+            initialValue: _colleagues.any((c) => c.id == _selectedColleague)
                 ? _selectedColleague
                 : null,
             hint: Text(
@@ -510,7 +586,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
             ),
             items: _colleagues.map((c) {
               return DropdownMenuItem(
-                value: c.displayName,
+                value: c.id,
                 child: Text(c.displayName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               );
             }).toList(),

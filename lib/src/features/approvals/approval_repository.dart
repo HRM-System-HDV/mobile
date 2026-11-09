@@ -26,4 +26,8 @@ class ApprovalRepository {
         '/api/requests/$id/reject',
         {if (note != null) 'reviewNote': note},
       );
+
+  /// Đồng nghiệp được nhờ làm thay / đổi ca phản hồi (khác với quản lý duyệt).
+  Future<void> respond(String id, {required bool accept}) =>
+      api.putJson('/api/requests/$id/respond', {'accept': accept});
 }

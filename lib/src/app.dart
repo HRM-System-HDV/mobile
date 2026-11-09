@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'core/models/branch.dart';
+import 'core/network/api_client.dart';
 import 'core/router/router.dart';
 import 'core/state/branch_scope.dart';
 import 'core/state/user_scope.dart';
@@ -18,7 +19,20 @@ class _HRMAppState extends State<HRMApp> {
   final ValueNotifier<UserModel?> _currentUser = ValueNotifier<UserModel?>(null);
 
   @override
+  void initState() {
+    super.initState();
+    ApiClient.onSessionExpired = _handleSessionExpired;
+  }
+
+  void _handleSessionExpired() {
+    _currentUser.value = null;
+    _selectedBranch.value = null;
+    AppRouter.router.go('/login');
+  }
+
+  @override
   void dispose() {
+    ApiClient.onSessionExpired = null;
     _selectedBranch.dispose();
     _currentUser.dispose();
     super.dispose();

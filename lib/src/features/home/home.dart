@@ -5,6 +5,7 @@ import '../../core/config/company.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/models/user.dart';
+import '../../core/network/api_client.dart';
 import '../schedule/schedule.dart';
 import '../salary/salary.dart';
 import '../leave_request/leave.dart';
@@ -22,12 +23,7 @@ class HomeScreen extends StatefulWidget {
 
   const HomeScreen({
     super.key,
-    this.currentUser = const UserModel(
-      name: 'Nguyễn Thu Hà',
-      email: 'nhanvien@company.com',
-      role: 'staff',
-      roleTitle: 'Nhân viên',
-    ),
+    required this.currentUser,
     this.onNavigateToTab,
   });
 
@@ -45,6 +41,10 @@ class _HomeScreenState extends State<HomeScreen> {
   List<TaskModel> _homeTasks = [];
   String? _loadedWifiBranchKey;
   String? _loadedTaskBranchKey;
+  String? _loadedShiftUserKey;
+  String? _shiftsError;
+  String? _wifiError;
+  String? _tasksError;
 
   UserModel get currentUser => (mounted ? UserScope.currentUser(context) : null) ?? widget.currentUser;
 
@@ -69,19 +69,30 @@ class _HomeScreenState extends State<HomeScreen> {
       _loadedTaskBranchKey = key;
       _loadHomeTasks(branchSlug: branch?.slug);
     }
+    final userKey = currentUser.id.isNotEmpty ? currentUser.id : currentUser.email;
+    if (_loadedShiftUserKey != userKey) {
+      _loadedShiftUserKey = userKey;
+      _fetchTodayShifts(employeeId: userKey.isNotEmpty ? userKey : null);
+    }
   }
 
-  Future<void> _fetchTodayShifts() async {
+  Future<void> _fetchTodayShifts({String? employeeId}) async {
     try {
-      final shifts = await ShiftRepository().getShifts();
-      // Gán vô điều kiện kể cả rỗng để hiện empty-state, không giữ mock.
+      final shifts = await ShiftRepository().getShifts(
+        employeeId: employeeId ?? (currentUser.id.isNotEmpty ? currentUser.id : null),
+      );
       if (mounted) {
-        setState(() => _todayShifts = shifts);
+        setState(() {
+          _todayShifts = shifts;
+          _shiftsError = null;
+        });
       }
-    } catch (_) {
-      // Chỉ dùng API thật: khi lỗi/offline giữ danh sách rỗng để hiện empty-state.
+    } catch (e) {
       if (mounted) {
-        setState(() => _todayShifts = []);
+        setState(() {
+          _todayShifts = [];
+          _shiftsError = e is ApiException ? e.message : 'Không kết nối được máy chủ';
+        });
       }
     }
   }
@@ -89,28 +100,40 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _fetchWifiConfigs({String? branchCode}) async {
     try {
       final configs = await _wifiRepo.getWifiConfigs(branch: branchCode ?? '');
-      // Gán vô điều kiện kể cả rỗng (fallback hiển thị '—'), không dùng mock.
       if (mounted) {
-        setState(() => _wifiConfigs = configs);
+        setState(() {
+          _wifiConfigs = configs;
+          _wifiError = null;
+        });
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
-        setState(() => _wifiConfigs = []);
+        setState(() {
+          _wifiConfigs = [];
+          _wifiError = e is ApiException ? e.message : 'Không kết nối được máy chủ';
+        });
       }
     }
   }
 
   Future<void> _loadHomeTasks({String? branchSlug}) async {
     try {
-      final tasks = await _taskRepo.getTasks(branchSlug: branchSlug);
-      // Gán vô điều kiện kể cả rỗng để hiện empty-state, không dùng mock.
+      final tasks = await _taskRepo.getTasks(
+        branchSlug: branchSlug,
+        assigneeId: currentUser.id.isNotEmpty ? currentUser.id : null,
+      );
       if (mounted) {
-        setState(() => _homeTasks = tasks);
+        setState(() {
+          _homeTasks = tasks;
+          _tasksError = null;
+        });
       }
-    } catch (_) {
-      // Lỗi thì list rỗng + empty-state, không dùng mock.
+    } catch (e) {
       if (mounted) {
-        setState(() => _homeTasks = []);
+        setState(() {
+          _homeTasks = [];
+          _tasksError = e is ApiException ? e.message : 'Không kết nối được máy chủ';
+        });
       }
     }
   }
@@ -123,10 +146,13 @@ class _HomeScreenState extends State<HomeScreen> {
     return '—';
   }
 
-  /// Nhãn BSSID từ config Wi-Fi thực tế, fallback '—' nếu không có.
+  /// Nhãn BSSID từ config Wi-Fi; thiết bị chưa được xác minh nên không khẳng định hợp lệ.
   String _wifiBssidLabel() {
+    if (_wifiError != null) {
+      return 'Không tải được cấu hình Wi-Fi: $_wifiError';
+    }
     if (_wifiConfigs.isNotEmpty && _wifiConfigs.first.bssid.isNotEmpty) {
-      return 'BSSID: ${_wifiConfigs.first.bssid} (Hợp lệ)';
+      return 'BSSID: ${_wifiConfigs.first.bssid} (chưa xác minh)';
     }
     return 'BSSID: —';
   }
@@ -595,27 +621,30 @@ class _HomeScreenState extends State<HomeScreen> {
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(color: const Color(0xFFFCD34D)),
                             ),
-                            child: const Row(
+                            child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(Icons.event_busy_rounded, color: Color(0xFFD97706), size: 24),
-                                SizedBox(width: 10),
+                                const Icon(Icons.event_busy_rounded, color: Color(0xFFD97706), size: 24),
+                                const SizedBox(width: 10),
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        'Không có ca làm việc hôm nay',
-                                        style: TextStyle(
+                                        _shiftsError != null
+                                            ? 'Không tải được lịch ca hôm nay'
+                                            : 'Không có ca làm việc hôm nay',
+                                        style: const TextStyle(
                                           fontWeight: FontWeight.bold,
                                           fontSize: 13.5,
                                           color: Color(0xFF92400E),
                                         ),
                                       ),
-                                      SizedBox(height: 3),
+                                      const SizedBox(height: 3),
                                       Text(
-                                        'Bạn chưa được xếp vào ca nào trong ngày hôm nay. Vui lòng liên hệ Quản lý nếu cần bổ sung ca.',
-                                        style: TextStyle(fontSize: 12, color: Color(0xFF92400E)),
+                                        _shiftsError ??
+                                            'Bạn chưa được xếp vào ca nào trong ngày hôm nay. Vui lòng liên hệ Quản lý nếu cần bổ sung ca.',
+                                        style: const TextStyle(fontSize: 12, color: Color(0xFF92400E)),
                                       ),
                                     ],
                                   ),
@@ -641,7 +670,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               const SizedBox(height: 4),
                               Text(
                                 wifiBssidLabel,
-                                style: const TextStyle(color: AppColors.success, fontSize: 12),
+                                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
                               ),
                             ],
                           ),
@@ -726,8 +755,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final user = widget.currentUser;
     final bool isHourly = user.isHourlySalary;
-    final double hoursWorked = shift.hours > 0 ? shift.hours : 5.0;
-    final int earnedMoney = (hoursWorked * user.hourlySalary).toInt();
+    final double? hoursWorked = shift.hours;
+    // Chỉ tạm tính khi có giờ ca và đơn giá thật; không bịa số giờ mặc định.
+    final int? earnedMoney = (hoursWorked != null && user.hourlySalary > 0)
+        ? (hoursWorked * user.hourlySalary).toInt()
+        : null;
 
     showModalBottomSheet(
       context: context,
@@ -838,7 +870,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             const SizedBox(height: 4),
                             Text(
                               wifiBssidLabel,
-                              style: const TextStyle(color: AppColors.success, fontSize: 12),
+                              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
                             ),
                           ],
                         ),
@@ -881,18 +913,18 @@ class _HomeScreenState extends State<HomeScreen> {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    'Tiền công ca (${hoursWorked}h × ${_formatCurrency(user.hourlySalary)} ₫/h):',
+                                    'Tiền công ca (${hoursWorked ?? '—'}h × ${user.hourlySalary > 0 ? _formatCurrency(user.hourlySalary) : '—'} ₫/h):',
                                     style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                                   ),
                                   Text(
-                                    '+${_formatCurrency(earnedMoney)} ₫',
+                                    earnedMoney != null ? '+${_formatCurrency(earnedMoney)} ₫' : '—',
                                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.success),
                                   ),
                                 ],
                               ),
                               const SizedBox(height: 4),
                               const Text(
-                                '💡 Được tự động cộng dồn vào bảng công ngay khi hoàn thành ra ca.',
+                                '💡 Số tiền tạm tính từ giờ ca và đơn giá của bạn; công thực tế do hệ thống chấm công ghi nhận.',
                                 style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontStyle: FontStyle.italic),
                               ),
                             ] else ...[
@@ -900,7 +932,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text('Khấu trừ phạt ca:', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                                  Text('0 ₫ (Không bị phạt)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.success)),
+                                  // Chưa có dữ liệu phạt từ API tại thời điểm ra ca.
+                                  Text('—', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
                                 ],
                               ),
                               const SizedBox(height: 4),
@@ -937,9 +970,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         backgroundColor: AppColors.success,
-                        content: Text(isHourly
-                            ? '✅ Chấm công ra ca ${shiftOut?.shiftName ?? ''} thành công! Đã cộng công: +${_formatCurrency(earnedMoney)} ₫ (${hoursWorked}h)'
-                            : '✅ Chấm công ra ca ${shiftOut?.shiftName ?? ''} thành công! (Lương tháng cố định)'),
+                        // API checkout không trả số tiền được cộng nên không khẳng định đã cộng công.
+                        content: Text('✅ Chấm công ra ca ${shiftOut?.shiftName ?? ''} thành công!'),
                       ),
                     );
                   } catch (e) {
@@ -1043,9 +1075,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Icon(Icons.checklist_rounded, size: 30, color: AppColors.primary.withValues(alpha: 0.7)),
                   ),
                   const SizedBox(height: 10),
-                  const Text('Không có công việc tồn đọng', style: TextStyle(color: AppColors.textSecondary, fontSize: 13, fontWeight: FontWeight.w600)),
+                  Text(
+                    _tasksError != null ? 'Không tải được danh sách công việc' : 'Không có công việc tồn đọng',
+                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
                   const SizedBox(height: 4),
-                  const Text('Bạn đã hoàn thành tất cả nhiệm vụ được giao!', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                  Text(
+                    _tasksError ?? 'Bạn đã hoàn thành tất cả nhiệm vụ được giao!',
+                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  ),
                 ],
               ),
             )
@@ -1059,6 +1097,10 @@ class _HomeScreenState extends State<HomeScreen> {
               itemBuilder: (ctx, index) {
                 final task = displayTasks[index];
                 final isOverdue = task.computedStatus == TaskStatus.overdue;
+                final due = task.dueDate;
+                final dueLabel = due == null
+                    ? '—'
+                    : '${due.hour.toString().padLeft(2, '0')}:${due.minute.toString().padLeft(2, '0')}';
 
                 return InkWell(
                   onTap: () async {
@@ -1171,7 +1213,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                '${task.assignedByName} • Hạn: ${task.dueDate.hour.toString().padLeft(2, '0')}:${task.dueDate.minute.toString().padLeft(2, '0')}',
+                                '${task.assignedByName} • Hạn: $dueLabel',
                                 style: TextStyle(fontSize: 11.5, color: isOverdue ? const Color(0xFFDC2626) : Colors.grey.shade600),
                               ),
                             ],

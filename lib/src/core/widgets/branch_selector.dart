@@ -72,12 +72,12 @@ class BranchSelector extends StatelessWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (sheetContext) => SafeArea(
-        // Danh sách thật từ API (getBranches fallback kBranches khi lỗi)
+        // Danh sách thật từ API / DB
         child: FutureBuilder<List<Branch>>(
           future: EmployeeRepository().getBranches(),
-          initialData: kBranches,
+          initialData: branches.isNotEmpty ? branches : null,
           builder: (ctx, snap) {
-            final branches = (snap.data == null || snap.data!.isEmpty) ? kBranches : snap.data!;
+            final branchList = snap.data ?? branches;
             return Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -109,26 +109,66 @@ class BranchSelector extends StatelessWidget {
                       Navigator.pop(sheetContext);
                     },
                   ),
-                for (final branch in branches)
-                  ListTile(
-                    leading: FaIcon(
-                      FontAwesomeIcons.store,
-                      color: current?.id == branch.id ? AppColors.primary : AppColors.textSecondary,
+                if (snap.connectionState == ConnectionState.waiting && branchList.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(24.0),
+                    child: Center(
+                      child: CircularProgressIndicator(color: AppColors.primary),
                     ),
-                    title: Text(
-                      branch.name,
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: current?.id == branch.id ? AppColors.primary : AppColors.textPrimary,
+                  )
+                else if (snap.hasError && branchList.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      children: [
+                        const Icon(Icons.cloud_off_rounded, size: 32, color: AppColors.error),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Không tải được danh sách chi nhánh',
+                          style: TextStyle(color: AppColors.error, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${snap.error}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  )
+                else if (branchList.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(24.0),
+                    child: Center(
+                      child: Text(
+                        'Chưa có chi nhánh nào',
+                        style: TextStyle(color: AppColors.textSecondary),
                       ),
                     ),
-                    subtitle: Text(branch.address, style: const TextStyle(fontSize: 11)),
-                    trailing: current?.id == branch.id ? const FaIcon(FontAwesomeIcons.check, color: AppColors.primary) : null,
-                    onTap: () {
-                      BranchScope.select(context, branch);
-                      Navigator.pop(sheetContext);
-                    },
-                  ),
+                  )
+                else
+                  for (final branch in branchList)
+                    ListTile(
+                      leading: FaIcon(
+                        FontAwesomeIcons.store,
+                        color: current?.id == branch.id ? AppColors.primary : AppColors.textSecondary,
+                      ),
+                      title: Text(
+                        branch.name,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: current?.id == branch.id ? AppColors.primary : AppColors.textPrimary,
+                        ),
+                      ),
+                      subtitle: branch.address.isNotEmpty
+                          ? Text(branch.address, style: const TextStyle(fontSize: 11))
+                          : null,
+                      trailing: current?.id == branch.id ? const FaIcon(FontAwesomeIcons.check, color: AppColors.primary) : null,
+                      onTap: () {
+                        BranchScope.select(context, branch);
+                        Navigator.pop(sheetContext);
+                      },
+                    ),
                 const SizedBox(height: 8),
               ],
             );

@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
 import '../../core/services/upload_service.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/widgets/branch_selector.dart';
+import '../../core/models/branch.dart';
 import '../../core/models/user.dart';
 import '../profile/employee_repository.dart';
+import '../schedule/shift_repository.dart';
 import 'task_service.dart';
 import 'task_repository.dart';
 
@@ -15,12 +18,7 @@ class TaskListScreen extends StatefulWidget {
 
   const TaskListScreen({
     super.key,
-    this.currentUser = const UserModel(
-      name: 'Nguyễn Thu Hà',
-      email: 'nhanvien@company.com',
-      role: 'staff',
-      roleTitle: 'Nhân viên',
-    ),
+    required this.currentUser,
     this.initialFilter,
   });
 
@@ -33,6 +31,9 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
   late TabController _tabController;
   List<TaskModel> _tasks = [];
   List<Map<String, dynamic>> _employeeList = [];
+  List<Branch> _branchList = [];
+  List<Map<String, dynamic>> _shiftTemplates = [];
+  String? _tasksError;
 
   final List<String> _tabs = [
     'Tất cả',
@@ -57,7 +58,20 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
     }
 
     _loadEmployees();
+    _loadBranchesAndTemplates();
     _loadTasks();
+  }
+
+  Future<void> _loadBranchesAndTemplates() async {
+    try {
+      final branches = await EmployeeRepository().getBranches();
+      if (mounted) setState(() => _branchList = branches);
+    } catch (_) {}
+
+    try {
+      final templates = await ShiftRepository().getTemplates();
+      if (mounted) setState(() => _shiftTemplates = templates);
+    } catch (_) {}
   }
 
   Future<void> _loadEmployees() async {
@@ -85,13 +99,14 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
       if (mounted) {
         setState(() {
           _tasks = remoteTasks;
+          _tasksError = null;
         });
       }
-    } catch (_) {
-      // Không dùng mock — lỗi thì hiện empty state.
+    } catch (e) {
+      // Giữ danh sách cũ, báo lỗi — không được giả vờ "đã xong hết việc".
       if (mounted) {
         setState(() {
-          _tasks = [];
+          _tasksError = e is ApiException ? e.message : 'Không tải được danh sách công việc';
         });
       }
     }
@@ -112,18 +127,28 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
   }
 
   /// Xử lý hoàn thành công việc (chỉ có nút Hoàn thành, không có nút bắt đầu)
-  void _handleCompleteTask(TaskModel task) {
+  Future<void> _handleCompleteTask(TaskModel task) async {
     if (task.computedStatus == TaskStatus.completed) {
       // Cho phép hủy đánh dấu nếu cần
-      _taskRepo.updateTaskStatus(task.id, 'pending').catchError((_) {});
-      TaskService.updateTaskStatus(task.id, TaskStatus.pending);
-      _loadTasks();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Đã chuyển lại trạng thái cần làm: ${task.title}'),
-          backgroundColor: const Color(0xFF3B82F6),
-        ),
-      );
+      try {
+        await _taskRepo.updateTaskStatus(task.id, 'pending');
+        if (!mounted) return;
+        TaskService.updateTaskStatus(task.id, TaskStatus.pending);
+        _loadTasks();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Đã chuyển lại trạng thái cần làm: ${task.title}'),
+            backgroundColor: const Color(0xFF3B82F6),
+          ),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: AppColors.error,
+          content: Text('❌ ${e is ApiException ? e.message : e}'),
+          duration: const Duration(seconds: 3),
+        ));
+      }
       return;
     }
 
@@ -132,16 +157,26 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
       _showPhotoProofSheet(task);
     } else {
       // Không yêu cầu chụp ảnh -> Hoàn thành trực tiếp
-      _taskRepo.updateTaskStatus(task.id, 'completed').catchError((_) {});
-      TaskService.completeTask(task.id);
-      _loadTasks();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('✓ Đã hoàn thành: ${task.title}'),
-          backgroundColor: AppColors.success,
-          duration: const Duration(seconds: 2),
-        ),
-      );
+      try {
+        await _taskRepo.updateTaskStatus(task.id, 'completed');
+        if (!mounted) return;
+        TaskService.completeTask(task.id);
+        _loadTasks();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✓ Đã hoàn thành: ${task.title}'),
+            backgroundColor: AppColors.success,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: AppColors.error,
+          content: Text('❌ ${e is ApiException ? e.message : e}'),
+          duration: const Duration(seconds: 3),
+        ));
+      }
     }
   }
 
@@ -418,15 +453,15 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                 onPressed: tempPhotoUrl == null
                     ? null
                     : () async {
-                        Navigator.pop(sheetCtx);
                         try {
                           await TaskRepository().updateTaskStatus(
                             task.id,
                             'completed',
                             proofUrl: tempPhotoUrl,
                           );
-                          _loadTasks();
+                          if (sheetCtx.mounted) Navigator.pop(sheetCtx);
                           if (!mounted) return;
+                          _loadTasks();
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text(
@@ -437,13 +472,11 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                           );
                         } catch (e) {
                           if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('❌ Hoàn thành thất bại: $e'),
-                              backgroundColor: Colors.red,
-                              duration: const Duration(seconds: 2),
-                            ),
-                          );
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            backgroundColor: AppColors.error,
+                            content: Text('❌ ${e is ApiException ? e.message : e}'),
+                            duration: const Duration(seconds: 3),
+                          ));
                         }
                       },
                 icon: const Icon(Icons.check_rounded, size: 20),
@@ -591,7 +624,9 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
             _buildDetailRow(
               Icons.access_time_rounded,
               'Hạn hoàn thành',
-              '${task.dueDate.hour.toString().padLeft(2, '0')}:${task.dueDate.minute.toString().padLeft(2, '0')} ngày ${task.dueDate.day}/${task.dueDate.month}/${task.dueDate.year}',
+              task.dueDate == null
+                  ? 'Chưa đặt hạn'
+                  : '${task.dueDate!.hour.toString().padLeft(2, '0')}:${task.dueDate!.minute.toString().padLeft(2, '0')} ngày ${task.dueDate!.day}/${task.dueDate!.month}/${task.dueDate!.year}',
               highlight: task.isOverdue,
             ),
             _buildDetailRow(
@@ -712,12 +747,35 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
     final descCtrl = TextEditingController();
     TaskSourceType selectedSource = TaskSourceType.manager;
     TaskPriority selectedPriority = TaskPriority.normal;
-    String selectedShift = 'Ca Sáng (07:00 - 14:00)';
+
+    // Danh sách ca mẫu
+    final shiftOptions = _shiftTemplates.isNotEmpty
+        ? _shiftTemplates.map((t) {
+            final name = t['name']?.toString() ?? 'Ca';
+            final start = t['startTime']?.toString() ?? '07:00';
+            final end = t['endTime']?.toString() ?? '14:00';
+            return '$name ($start - $end)';
+          }).toList()
+        : [
+            'Ca Sáng (07:00 - 14:00)',
+            'Ca Chiều (14:00 - 22:00)',
+            'Ca Tối (18:00 - 23:00)',
+          ];
+    String selectedShift = shiftOptions.first;
+
     final String? initialStaff = _employeeList.isNotEmpty
         ? _employeeList.first['name']?.toString()
         : null;
     String? assignedPerson = initialStaff;
-    bool requirePhoto = false; // Quản trị viên được phép yêu cầu chụp ảnh hoặc không
+
+    // Chi nhánh
+    final currentScopeBranch = BranchScope.selectedBranch(context);
+    String targetBranch = currentScopeBranch?.slug ?? (_branchList.isNotEmpty ? _branchList.first.slug : '');
+
+    // Deadline mặc định: 4 tiếng sau
+    DateTime selectedDeadline = DateTime.now().add(const Duration(hours: 4));
+
+    bool requirePhoto = false;
 
     showModalBottomSheet(
       context: context,
@@ -756,80 +814,92 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 16),
+
+                // Tiêu đề
                 TextField(
                   controller: titleCtrl,
                   decoration: InputDecoration(
                     labelText: 'Tiêu đề công việc *',
-                    hintText: 'Ví dụ: Kiểm tra quầy bar, đối chiếu hoá đơn...',
+                    hintText: 'Ví dụ: Kiểm tra quầy bar, đối soát phiếu thu...',
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                     prefixIcon: const Icon(Icons.assignment_outlined, size: 22),
                   ),
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: descCtrl,
-                  maxLines: 3,
-                  decoration: InputDecoration(
-                    labelText: 'Mô tả chi tiết / Chỉ đạo',
-                    hintText: 'Nội dung hướng dẫn thực hiện cho nhân sự...',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-                const SizedBox(height: 14),
+
+                // Hình thức giao việc (manager vs shift)
                 DropdownButtonFormField<TaskSourceType>(
                   initialValue: selectedSource,
                   decoration: InputDecoration(
-                    labelText: 'Hình thức giao việc',
+                    labelText: 'Phân loại nguồn việc',
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   items: const [
                     DropdownMenuItem(value: TaskSourceType.manager, child: Text('📌 Quản lý giao riêng')),
-                    DropdownMenuItem(value: TaskSourceType.shift, child: Text('🔄 Giao cố định theo ca')),
+                    DropdownMenuItem(value: TaskSourceType.shift, child: Text('🔄 Cố định theo ca làm việc')),
                   ],
                   onChanged: (val) {
                     if (val != null) setDialogState(() => selectedSource = val);
                   },
                 ),
                 const SizedBox(height: 12),
+
                 if (selectedSource == TaskSourceType.shift) ...[
+                  // Ca làm việc áp dụng
                   DropdownButtonFormField<String>(
                     initialValue: selectedShift,
                     decoration: InputDecoration(
-                      labelText: 'Ca làm việc áp dụng',
+                      labelText: 'Ca làm việc áp dụng (từ DB)',
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    items: const [
-                      DropdownMenuItem(value: 'Ca Sáng (07:00 - 14:00)', child: Text('Ca Sáng (07:00 - 14:00)')),
-                      DropdownMenuItem(value: 'Ca Chiều (14:00 - 22:00)', child: Text('Ca Chiều (14:00 - 22:00)')),
-                      DropdownMenuItem(value: 'Ca Tối (18:00 - 23:00)', child: Text('Ca Tối (18:00 - 23:00)')),
-                    ],
+                    items: shiftOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
                     onChanged: (val) {
                       if (val != null) setDialogState(() => selectedShift = val);
                     },
                   ),
+                  const SizedBox(height: 12),
+                  // Chi nhánh áp dụng
+                  if (_branchList.isNotEmpty)
+                    DropdownButtonFormField<String>(
+                      initialValue: _branchList.any((b) => b.slug.toLowerCase() == targetBranch.toLowerCase())
+                          ? _branchList.firstWhere((b) => b.slug.toLowerCase() == targetBranch.toLowerCase()).slug
+                          : _branchList.first.slug,
+                      decoration: InputDecoration(
+                        labelText: 'Chi nhánh áp dụng',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      items: _branchList.map((b) => DropdownMenuItem(value: b.slug, child: Text('${b.name} (${b.slug.toUpperCase()})'))).toList(),
+                      onChanged: (val) {
+                        if (val != null) setDialogState(() => targetBranch = val);
+                      },
+                    ),
+                  const SizedBox(height: 12),
                 ] else ...[
+                  // Nhân sự thực hiện
                   DropdownButtonFormField<String>(
                     initialValue: assignedPerson,
                     decoration: InputDecoration(
-                      labelText: 'Nhân sự thực hiện (Giao riêng)',
+                      labelText: 'Người thực hiện (Nhân sự) *',
                       hintText: _employeeList.isEmpty ? 'Chưa có dữ liệu nhân sự' : null,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    // Chỉ load từ getEmployees() — rỗng thì dropdown rỗng.
                     items: _employeeList.map((e) {
-                            final name = e['name']?.toString() ?? 'Nhân viên';
-                            final role = e['role']?.toString() ?? 'Nhân viên';
-                            return DropdownMenuItem(
-                              value: name,
-                              child: Text('$name ($role)'),
-                            );
-                          }).toList(),
+                      final name = e['name']?.toString() ?? 'Nhân viên';
+                      final role = e['role']?.toString() ?? 'Nhân viên';
+                      final branch = e['branchSlug']?.toString() ?? e['branch']?.toString() ?? '';
+                      return DropdownMenuItem(
+                        value: name,
+                        child: Text('$name ($role${branch.isNotEmpty ? ' - $branch' : ''})'),
+                      );
+                    }).toList(),
                     onChanged: (val) {
                       if (val != null) setDialogState(() => assignedPerson = val);
                     },
                   ),
+                  const SizedBox(height: 12),
                 ],
-                const SizedBox(height: 12),
+
+                // Mức độ ưu tiên
                 DropdownButtonFormField<TaskPriority>(
                   initialValue: selectedPriority,
                   decoration: InputDecoration(
@@ -845,9 +915,68 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                     if (val != null) setDialogState(() => selectedPriority = val);
                   },
                 ),
+                const SizedBox(height: 12),
+
+                // Hạn chót hoàn thành (Deadline)
+                InkWell(
+                  onTap: () async {
+                    final pickedDate = await showDatePicker(
+                      context: sheetCtx,
+                      initialDate: selectedDeadline,
+                      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+                      lastDate: DateTime.now().add(const Duration(days: 365)),
+                    );
+                    if (pickedDate != null) {
+                      if (!sheetCtx.mounted) return;
+                      final pickedTime = await showTimePicker(
+                        context: sheetCtx,
+                        initialTime: TimeOfDay.fromDateTime(selectedDeadline),
+                      );
+                      if (pickedTime != null) {
+                        setDialogState(() {
+                          selectedDeadline = DateTime(
+                            pickedDate.year,
+                            pickedDate.month,
+                            pickedDate.day,
+                            pickedTime.hour,
+                            pickedTime.minute,
+                          );
+                        });
+                      }
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade400),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Hạn chót hoàn thành (Deadline) *',
+                              style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              '${selectedDeadline.hour.toString().padLeft(2, '0')}:${selectedDeadline.minute.toString().padLeft(2, '0')} - ${selectedDeadline.day.toString().padLeft(2, '0')}/${selectedDeadline.month.toString().padLeft(2, '0')}/${selectedDeadline.year}',
+                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                            ),
+                          ],
+                        ),
+                        const Icon(Icons.calendar_today_rounded, size: 20, color: AppColors.primary),
+                      ],
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 14),
 
-                // Tuỳ chọn yêu cầu chụp ảnh kết quả của Quản trị viên
+                // Yêu cầu chụp ảnh minh chứng
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
@@ -860,11 +989,11 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                   child: SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text(
-                      'Yêu cầu chụp ảnh minh chứng',
+                      'Yêu cầu chụp ảnh minh chứng kết quả',
                       style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                     ),
                     subtitle: const Text(
-                      'Bắt buộc nhân viên chụp ảnh kết quả mới được bấm hoàn thành',
+                      'Bắt buộc nhân viên chụp ảnh thực tế mới được hoàn thành',
                       style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
                     ),
                     secondary: Icon(
@@ -878,8 +1007,21 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                     },
                   ),
                 ),
+                const SizedBox(height: 12),
 
+                // Mô tả chi tiết
+                TextField(
+                  controller: descCtrl,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    labelText: 'Mô tả chi tiết / Hướng dẫn thực hiện',
+                    hintText: 'Nội dung chi tiết, các tiêu chuẩn hoặc lưu ý cần kiểm tra...',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
                 const SizedBox(height: 20),
+
+                // Nút tạo
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
@@ -895,31 +1037,49 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                     }
 
                     final bool isShift = selectedSource == TaskSourceType.shift;
-                    final branch = BranchScope.selectedBranch(context);
-                    final branchSlug = branch?.slug ?? 'hn-1';
 
-                    String? assigneeId;
+                    Map<String, dynamic>? selectedEmpObj;
                     if (!isShift && assignedPerson != null) {
-                      final match = _employeeList.firstWhere(
+                      selectedEmpObj = _employeeList.firstWhere(
                         (e) => e['name']?.toString() == assignedPerson,
                         orElse: () => <String, dynamic>{},
                       );
-                      assigneeId = match['id']?.toString();
                     }
+
+                    final empName = isShift
+                        ? 'Tất cả nhân sự trực ${selectedShift.split('(')[0].trim()}'
+                        : (assignedPerson ?? 'Nhân viên');
+                    final empEmail = isShift ? 'shift_all' : (selectedEmpObj?['email']?.toString() ?? '');
+                    final assigneeId = selectedEmpObj?['id']?.toString() ?? (isShift ? null : assignedPerson);
+
+                    final effectiveBranch = isShift
+                        ? targetBranch
+                        : (selectedEmpObj?['branchSlug']?.toString() ?? selectedEmpObj?['branch']?.toString() ?? targetBranch);
 
                     final priStr = selectedPriority == TaskPriority.urgent
                         ? 'urgent'
                         : (selectedPriority == TaskPriority.high ? 'high' : 'normal');
 
+                    final dueDateIso = '${selectedDeadline.year}-${selectedDeadline.month.toString().padLeft(2, '0')}-${selectedDeadline.day.toString().padLeft(2, '0')} ${selectedDeadline.hour.toString().padLeft(2, '0')}:${selectedDeadline.minute.toString().padLeft(2, '0')}';
+
+                    final currentUserName = widget.currentUser.name.isNotEmpty
+                        ? '${widget.currentUser.name} (${widget.currentUser.roleTitle.isNotEmpty ? widget.currentUser.roleTitle : 'Quản lý'})'
+                        : 'Ban Quản lý';
+
                     try {
                       await _taskRepo.createTask(
                         title: titleCtrl.text.trim(),
-                        description: descCtrl.text.trim().isEmpty
-                            ? 'Thực hiện theo chỉ đạo của quản lý.'
-                            : descCtrl.text.trim(),
-                        branchSlug: branchSlug,
+                        description: descCtrl.text.trim(),
+                        branchSlug: effectiveBranch,
                         priority: priStr,
+                        dueDate: dueDateIso,
                         assigneeId: assigneeId,
+                        sourceType: isShift ? 'shift' : 'manager',
+                        assignedByName: isShift ? 'Quy trình ${selectedShift.split('(')[0].trim()}' : currentUserName,
+                        shiftName: isShift ? selectedShift : null,
+                        assignedToEmail: empEmail,
+                        assignedToName: empName,
+                        requirePhoto: requirePhoto,
                       );
                       if (sheetCtx.mounted) {
                         Navigator.pop(sheetCtx);
@@ -929,18 +1089,17 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
 
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('✓ Đã giao việc thành công cho ${assignedPerson ?? 'nhân sự đã chọn'}!'),
+                          content: Text('✓ Đã giao việc thành công: ${titleCtrl.text.trim()}'),
                           backgroundColor: AppColors.success,
                         ),
                       );
                     } catch (e) {
                       if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('❌ Giao việc thất bại: $e'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        backgroundColor: AppColors.error,
+                        content: Text('❌ ${e is ApiException ? e.message : e}'),
+                        duration: const Duration(seconds: 3),
+                      ));
                     }
                   },
                   child: const Text(
@@ -973,7 +1132,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text(
-          'Công việc cần làm',
+          'Giao việc & Nhiệm vụ',
           style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 17),
         ),
         actions: [
@@ -1008,6 +1167,41 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
         controller: _tabController,
         children: List.generate(_tabs.length, (tabIndex) {
           final filtered = _filterTasks(tabIndex);
+
+          if (_tasksError != null && _tasks.isEmpty) {
+            return RefreshIndicator(
+              onRefresh: _loadTasks,
+              color: AppColors.primary,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  const SizedBox(height: 120),
+                  Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.cloud_off_rounded, size: 48, color: AppColors.error),
+                        const SizedBox(height: 14),
+                        const Text(
+                          'Không tải được danh sách công việc',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                        ),
+                        const SizedBox(height: 4),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 32),
+                          child: Text(
+                            '${_tasksError!}\nKéo xuống để thử lại.',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
 
           if (filtered.isEmpty) {
             return RefreshIndicator(
@@ -1274,7 +1468,9 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                   Icon(Icons.access_time_rounded, size: 14, color: isOverdue ? const Color(0xFFDC2626) : Colors.grey.shade600),
                   const SizedBox(width: 4),
                   Text(
-                    '${task.dueDate.hour.toString().padLeft(2, '0')}:${task.dueDate.minute.toString().padLeft(2, '0')}',
+                    task.dueDate == null
+                        ? '—'
+                        : '${task.dueDate!.hour.toString().padLeft(2, '0')}:${task.dueDate!.minute.toString().padLeft(2, '0')}',
                     style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.bold,

@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
+import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/widgets/branch_selector.dart';
+import '../../core/widgets/week_strip.dart';
 import 'shift_repository.dart';
 
 class ShiftOption {
@@ -18,40 +22,50 @@ class ShiftOption {
   String get displayName => id == 'off' ? name : '$name ($timeRange)';
 }
 
-// Danh sách ca mẫu chuẩn do Quản trị thiết lập (đồng bộ với hệ thống ca quản trị)
+// Danh sách ca mẫu chuẩn (đồng bộ từ backend GET /api/shift-templates)
 List<ShiftOption> adminShiftTemplates = [
   const ShiftOption(id: 'off', name: 'Nghỉ (Không làm ca)', timeRange: 'Nghỉ ca'),
-  const ShiftOption(id: 't1', name: 'Ca Sáng', timeRange: '07:00 - 14:00'),
-  const ShiftOption(id: 't2', name: 'Ca Chiều', timeRange: '14:00 - 22:00'),
-  const ShiftOption(id: 't3', name: 'Ca Tối', timeRange: '18:00 - 23:00'),
-  const ShiftOption(id: 't4', name: 'Ca Hành chính', timeRange: '08:00 - 17:00'),
 ];
 
 class DayShiftRegistration {
   final String dayName;
   final String dateStr;
   final String shortKey;
-  String selectedShiftId;
+  final Set<String> selectedShiftIds;
 
   DayShiftRegistration({
     required this.dayName,
     required this.dateStr,
     required this.shortKey,
-    required this.selectedShiftId,
-  });
+    Set<String>? selectedShiftIds,
+  }) : selectedShiftIds = selectedShiftIds ?? <String>{};
 
-  bool get isOff => selectedShiftId == 'off';
+  bool get isOff => selectedShiftIds.isEmpty;
 
-  ShiftOption get currentShift =>
-      adminShiftTemplates.firstWhere((s) => s.id == selectedShiftId, orElse: () => adminShiftTemplates.first);
+  bool isShiftSelected(String shiftId) {
+    if (selectedShiftIds.contains(shiftId)) return true;
+    final target = adminShiftTemplates.firstWhere(
+      (s) => s.id == shiftId,
+      orElse: () => ShiftOption(id: shiftId, name: shiftId, timeRange: ''),
+    );
+    for (final id in selectedShiftIds) {
+      if (id == target.id || id.toLowerCase() == target.name.toLowerCase()) return true;
+      final sel = adminShiftTemplates.firstWhere(
+        (s) => s.id == id,
+        orElse: () => ShiftOption(id: id, name: id, timeRange: ''),
+      );
+      if (sel.name.toLowerCase() == target.name.toLowerCase()) return true;
+    }
+    return false;
+  }
 }
 
 /// Model lưu dữ liệu đăng ký ca theo từng tuần
 class WeekRegistrationData {
-  final String weekLabel;         // VD: "Tuần 24/08 - 30/08"
+  final String weekLabel;
   final List<DayShiftRegistration> days;
-  String? note;                   // Note nguyện vọng
-  bool noteSent;                  // Đã gửi note chưa
+  String? note;
+  bool noteSent;
 
   WeekRegistrationData({
     required this.weekLabel,
@@ -69,14 +83,13 @@ class ScheduleRegistrationScreen extends StatefulWidget {
 }
 
 class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen> {
-  // Offset tuần so với tuần tới (0 = tuần tới, -1 = tuần này, -2 = tuần trước...)
-  // Người dùng có thể chuyển về xem lịch sử tuần trước
-  int _weekOffset = 1; // Mặc định là tuần tới (để đăng ký)
+  // Offset tuần so với tuần này: 0 = tuần này, 1 = tuần sau, 2 = 2 tuần sau...
+  int _weekOffset = 1;
 
-  final TextEditingController _noteController = TextEditingController();
-  bool _isEditingNote = false;
+  // Ngày đang được chọn trong tuần (0: Thứ 2 -> 6: Chủ Nhật)
+  int _selectedDayIndex = 0;
 
-  // Cache dữ liệu tuần — khởi rỗng, điền từ API (getRegistrations), không dùng mẫu cứng
+  // Cache dữ liệu tuần
   final Map<int, WeekRegistrationData> _weekDataCache = {};
 
   DateTime get _today {
@@ -117,9 +130,6 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
     final dayNames = ['Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy', 'Chủ Nhật'];
     final shortKeys = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
 
-    // Khởi rỗng (chưa đăng ký = Nghỉ) — lịch sử đọc từ API, rỗng thì hiện empty state
-    final defaultShifts = List.generate(7, (_) => 'off');
-
     final days = List.generate(7, (i) {
       final dayDate = monday.add(Duration(days: i));
       final dateStr = '${dayDate.day.toString().padLeft(2, '0')}/${dayDate.month.toString().padLeft(2, '0')}';
@@ -127,30 +137,27 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
         dayName: dayNames[i],
         dateStr: dateStr,
         shortKey: shortKeys[i],
-        selectedShiftId: defaultShifts[i],
+        selectedShiftIds: <String>{},
       );
     });
 
-    // Không dùng note mẫu — note đọc từ API getRegistrations
     final weekData = WeekRegistrationData(
       weekLabel: _getWeekRange(offset),
       days: days,
-      note: null,
-      noteSent: false,
     );
     _weekDataCache[offset] = weekData;
     return weekData;
   }
 
   WeekRegistrationData get _currentWeekData => _getOrCreateWeekData(_weekOffset);
-  bool get _isPastWeek => _weekOffset <= 0; // Tuần này hoặc tuần trước = chỉ xem, không cho sửa ca
+  bool get _isPastWeek => _weekOffset < 0;
 
   @override
   void initState() {
     super.initState();
-    final weekData = _getOrCreateWeekData(_weekOffset);
-    if (weekData.noteSent && weekData.note != null) {
-      _noteController.text = weekData.note!;
+    // Nếu là tuần hiện tại thì tự chọn ngày hôm nay
+    if (_weekOffset == 0) {
+      _selectedDayIndex = (_today.weekday - 1).clamp(0, 6);
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadRemoteRegistrations();
@@ -185,83 +192,143 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
             adminShiftTemplates = loaded;
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: AppColors.error,
+              content: Text('❌ Không tải được khung ca: ${e is ApiException ? e.message : e}'),
+            ),
+          );
+        }
+      }
 
       final regs = empId.isNotEmpty
           ? await repo.getRegistrations(employeeId: empId)
           : <Map<String, dynamic>>[];
       if (mounted) {
         final weekData = _getOrCreateWeekData(_weekOffset);
-        // Reset về rỗng trước khi điền API để rỗng hiện empty state
         for (final day in weekData.days) {
-          day.selectedShiftId = 'off';
+          day.selectedShiftIds.clear();
         }
-        weekData.note = null;
-        weekData.noteSent = false;
-        _noteController.text = '';
         for (final r in regs) {
-          final pref = r['preference']?.toString() ?? '';
+          final pref = r['preference']?.toString() ?? r['week']?.toString() ?? '';
           final shiftId = r['shiftId']?.toString() ?? '';
-          if (shiftId == 'preference_note' && pref.isNotEmpty) {
-            weekData.note = pref;
-            weekData.noteSent = true;
-            _noteController.text = pref;
-          } else {
+          if (shiftId != 'preference_note' && shiftId.isNotEmpty && shiftId != 'off') {
             for (final day in weekData.days) {
-              if (day.dateStr == pref || pref.contains(day.dateStr)) {
-                day.selectedShiftId = shiftId;
+              if (day.dateStr == pref ||
+                  pref.contains(day.dateStr) ||
+                  day.shortKey.toUpperCase() == pref.toUpperCase()) {
+                day.selectedShiftIds.add(shiftId);
               }
             }
           }
         }
         setState(() {});
       }
-    } catch (_) {}
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.error,
+          content: Text('❌ Không tải được đăng ký ca: ${e is ApiException ? e.message : e}'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   void _onWeekChanged(int newOffset) {
     setState(() {
       _weekOffset = newOffset;
-      _isEditingNote = false;
-      final weekData = _getOrCreateWeekData(newOffset);
-      if (weekData.noteSent && weekData.note != null) {
-        _noteController.text = weekData.note!;
-      } else {
-        _noteController.text = weekData.note ?? '';
-      }
+      _selectedDayIndex = 0;
     });
     _loadRemoteRegistrations();
   }
 
-  void _onSelectShift(DayShiftRegistration day, String shiftId) {
+  Future<void> _onToggleShift(DayShiftRegistration day, ShiftOption shift) async {
     final user = UserScope.currentUser(context);
     final empId = user?.id ?? '';
-    if (empId.isNotEmpty) {
-      ShiftRepository().registerShift(
-        employeeId: empId,
-        shiftId: shiftId,
-        preference: day.dateStr,
-      ).catchError((_) {});
+    final branch = BranchScope.selectedBranch(context);
+    final branchSlug = branch?.slug ?? user?.branchSlug ?? user?.assignedBranchId;
+    final isCurrentlyRegistered = day.isShiftSelected(shift.id);
+
+    if (empId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: AppColors.error,
+          content: Text('❌ Không xác định được tài khoản, vui lòng đăng nhập lại'),
+        ),
+      );
+      return;
     }
+
+    // Chỉ đổi trạng thái ô chọn khi server đã ghi nhận, không báo trước thành công.
+    try {
+      if (isCurrentlyRegistered) {
+        await ShiftRepository().unregisterShift(
+          employeeId: empId,
+          shiftId: shift.id,
+          preference: day.dateStr,
+        );
+      } else {
+        await ShiftRepository().registerShift(
+          employeeId: empId,
+          shiftId: shift.id,
+          preference: day.dateStr,
+          branchSlug: branchSlug,
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.error,
+          content: Text('❌ ${e is ApiException ? e.message : 'Không lưu được đăng ký ca, vui lòng thử lại.'}'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+
     setState(() {
-      day.selectedShiftId = shiftId;
+      if (isCurrentlyRegistered) {
+        day.selectedShiftIds.removeWhere((id) {
+          if (id == shift.id) return true;
+          final match = adminShiftTemplates.firstWhere(
+            (s) => s.id == id,
+            orElse: () => ShiftOption(id: id, name: id, timeRange: ''),
+          );
+          return match.name.toLowerCase() == shift.name.toLowerCase();
+        });
+      } else {
+        day.selectedShiftIds.add(shift.id);
+      }
     });
+
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: const Color(0xFF1E293B),
         behavior: SnackBarBehavior.floating,
         margin: const EdgeInsets.all(16),
-        duration: const Duration(milliseconds: 1000),
+        duration: const Duration(milliseconds: 1200),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         content: Row(
           children: [
-            const FaIcon(FontAwesomeIcons.cloudArrowUp, color: Colors.greenAccent, size: 18),
-            const SizedBox(width: 8),
+            FaIcon(
+              isCurrentlyRegistered ? FontAwesomeIcons.circleMinus : FontAwesomeIcons.circleCheck,
+              color: isCurrentlyRegistered ? Colors.amberAccent : Colors.greenAccent,
+              size: 18,
+            ),
+            const SizedBox(width: 10),
             Expanded(
               child: Text(
-                '${day.dayName}: Đã lưu ${day.currentShift.displayName}',
-                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500, color: Colors.white),
+                isCurrentlyRegistered
+                    ? '${day.dayName}: Đã hủy đăng ký ${shift.name}'
+                    : '${day.dayName}: Đã đăng ký ${shift.name} (${shift.timeRange})',
+                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Colors.white),
               ),
             ),
           ],
@@ -270,88 +337,31 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
     );
   }
 
-  void _sendNote() {
-    final note = _noteController.text.trim();
-    if (note.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Vui lòng nhập nội dung ghi chú trước khi gửi'),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.orange.shade700,
-          duration: const Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-    final user = UserScope.currentUser(context);
-    final empId = user?.id ?? '';
-    if (empId.isNotEmpty) {
-      ShiftRepository().registerShift(
-        employeeId: empId,
-        shiftId: 'preference_note',
-        preference: note,
-      ).catchError((_) {});
-    }
-    setState(() {
-      _currentWeekData.note = note;
-      _currentWeekData.noteSent = true;
-      _isEditingNote = false;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Row(
-          children: [
-            FaIcon(FontAwesomeIcons.circleCheck, color: Colors.white, size: 18),
-            SizedBox(width: 8),
-            Text('Đã gửi ghi chú nguyện vọng thành công!'),
-          ],
-        ),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: AppColors.success,
-        duration: Duration(seconds: 2),
-      ),
-    );
+  IconData _getShiftIcon(String name) {
+    final lower = name.toLowerCase();
+    if (lower.contains('sáng') || lower.contains('morning')) return Icons.wb_sunny_rounded;
+    if (lower.contains('chiều') || lower.contains('afternoon')) return Icons.wb_twilight_rounded;
+    if (lower.contains('tối') || lower.contains('night') || lower.contains('evening')) return Icons.nightlight_round;
+    if (lower.contains('hành chính') || lower.contains('office') || lower.contains('full')) return Icons.work_outline_rounded;
+    return Icons.access_time_rounded;
   }
 
-  void _saveNote() {
-    final note = _noteController.text.trim();
-    setState(() {
-      _currentWeekData.note = note.isEmpty ? null : note;
-      _currentWeekData.noteSent = note.isNotEmpty;
-      _isEditingNote = false;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Row(
-          children: [
-            FaIcon(FontAwesomeIcons.floppyDisk, color: Colors.white, size: 18),
-            SizedBox(width: 8),
-            Text('Đã lưu ghi chú nguyện vọng'),
-          ],
-        ),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: AppColors.primary,
-        duration: Duration(seconds: 2),
-      ),
-    );
-  }
-
-  void _startEditNote() {
-    setState(() {
-      _noteController.text = _currentWeekData.note ?? '';
-      _isEditingNote = true;
-    });
-  }
-
-  @override
-  void dispose() {
-    _noteController.dispose();
-    super.dispose();
+  Color _getShiftColor(String name) {
+    final lower = name.toLowerCase();
+    if (lower.contains('sáng')) return Colors.amber.shade700;
+    if (lower.contains('chiều')) return Colors.orange.shade700;
+    if (lower.contains('tối')) return Colors.indigo.shade600;
+    if (lower.contains('hành chính')) return Colors.teal.shade700;
+    return AppColors.primary;
   }
 
   @override
   Widget build(BuildContext context) {
     final weekData = _currentWeekData;
+    final selectedDay = weekData.days[_selectedDayIndex.clamp(0, 6)];
+    final availableShifts = adminShiftTemplates.where((s) => s.id != 'off').toList();
+    final isLocked = _isPastWeek;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -366,454 +376,196 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
           icon: const FaIcon(FontAwesomeIcons.chevronLeft, size: 18, color: AppColors.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: const [
+          BranchSelector(includeAll: true),
+        ],
       ),
       body: Column(
         children: [
-          // ── THANH ĐIỀU HƯỚNG TUẦN (Xem lịch sử / tuần tới) ──
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    InkWell(
-                      onTap: () => _onWeekChanged(_weekOffset - 1),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: AppColors.background,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: const FaIcon(FontAwesomeIcons.chevronLeft, size: 13, color: AppColors.primary),
-                      ),
-                    ),
-
-                    Column(
-                      children: [
-                        Text(
-                          _getWeekTitle(_weekOffset),
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                        Text(
-                          _getWeekRange(_weekOffset),
-                          style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
-                        ),
-                      ],
-                    ),
-
-                    InkWell(
-                      onTap: () => _onWeekChanged(_weekOffset + 1),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: AppColors.background,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: const FaIcon(FontAwesomeIcons.chevronRight, size: 13, color: AppColors.primary),
-                      ),
-                    ),
-                  ],
-                ),
-
-                // Badge trạng thái tuần
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: _isPastWeek ? Colors.grey.shade100 : AppColors.primary.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: _isPastWeek ? Colors.grey.shade300 : AppColors.primary.withValues(alpha: 0.3),
-                        ),
-                      ),
-                      child: Text(
-                        _isPastWeek ? 'Chỉ xem — Đã qua' : 'Đang mở đăng ký',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: _isPastWeek ? Colors.grey.shade600 : AppColors.primary,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          // ── THANH CHỌN TUẦN & 7 NGÀY (DÙNG CHUNG WeekDayStrip NHƯ LỊCH LÀM VIỆC CHUNG) ──
+          WeekDayStrip(
+            weekLabel: '${_getWeekTitle(_weekOffset)}  •  ${_getWeekRange(_weekOffset)}',
+            days: List.generate(weekData.days.length, (index) {
+              final day = weekData.days[index];
+              final parts = day.dateStr.split('/');
+              final dayNum = parts.isNotEmpty ? (int.tryParse(parts[0]) ?? 0) : 0;
+              final isToday = day.dayName == 'Hôm nay' ||
+                  (day.dateStr ==
+                      '${_today.day.toString().padLeft(2, '0')}/${_today.month.toString().padLeft(2, '0')}');
+              final hasRegistered = !day.isOff;
+              return {
+                'label': day.shortKey,
+                'day': dayNum,
+                'isToday': isToday,
+                'dotColor': hasRegistered ? AppColors.primary : Colors.grey.shade300,
+              };
+            }),
+            selectedIndex: _selectedDayIndex.clamp(0, 6),
+            onDaySelected: (index) => setState(() => _selectedDayIndex = index),
+            onPrevWeek: () => _onWeekChanged(_weekOffset - 1),
+            onNextWeek: () => _onWeekChanged(_weekOffset + 1),
           ),
           const Divider(height: 1),
 
-          // ── DANH SÁCH CÁC NGÀY TRONG TUẦN ──
+          // ── DANH SÁCH CÁC CA LÀM VIỆC CỦA NGÀY ĐANG CHỌN ──
           Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-              itemCount: weekData.days.length + 1, // +1 cho khối Note cuối
-              separatorBuilder: (_, index) => SizedBox(height: index < weekData.days.length - 1 ? 10 : 14),
-              itemBuilder: (context, index) {
-                // Phần cuối: Khối Note Ghi chú
-                if (index == weekData.days.length) {
-                  return _buildNoteSection(weekData);
-                }
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+              children: [
+                // Danh sách ca của ngày đang chọn
+                ...availableShifts.map((shift) {
+                  final isRegistered = selectedDay.isShiftSelected(shift.id);
+                  final shiftColor = _getShiftColor(shift.name);
+                  final shiftIcon = _getShiftIcon(shift.name);
 
-                final day = weekData.days[index];
-                final isOff = day.isOff;
-                final isLocked = _isPastWeek; // Không cho sửa nếu tuần đã qua
-
-                return Card(
-                  margin: EdgeInsets.zero,
-                  elevation: 0.5,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(
-                      color: isLocked
-                          ? Colors.grey.shade200
-                          : (isOff ? Colors.grey.shade200 : AppColors.primary.withValues(alpha: 0.25)),
-                    ),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    child: Row(
-                      children: [
-                        // Cột Thứ & Ngày bên trái
-                        SizedBox(
-                          width: 82,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                day.dayName,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
-                                  color: isLocked ? Colors.grey.shade600 : AppColors.textPrimary,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                day.dateStr,
-                                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-
-                        // Cột Dropdown sổ xuống chọn ca bên phải
-                        Expanded(
-                          child: isLocked
-                              // Khóa: Chỉ hiển thị badge ca đã đăng ký (không cho sửa)
-                              ? Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                                  decoration: BoxDecoration(
-                                    color: isOff ? Colors.grey.shade100 : AppColors.primary.withValues(alpha: 0.07),
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: isOff ? Colors.grey.shade300 : AppColors.primary.withValues(alpha: 0.2),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      FaIcon(
-                                        isOff ? FontAwesomeIcons.umbrellaBeach : FontAwesomeIcons.clock,
-                                        size: 16,
-                                        color: isOff ? Colors.grey.shade500 : AppColors.primary,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          day.currentShift.displayName,
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w600,
-                                            color: isOff ? Colors.grey.shade600 : AppColors.textPrimary,
-                                          ),
-                                        ),
-                                      ),
-                                      FaIcon(FontAwesomeIcons.lock, size: 14, color: Colors.grey.shade400),
-                                    ],
-                                  ),
-                                )
-                              : DropdownButtonFormField<String>(
-                                  isExpanded: true,
-                                  initialValue: day.selectedShiftId,
-                                  decoration: InputDecoration(
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: BorderSide(color: Colors.grey.shade300),
-                                    ),
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: BorderSide(color: Colors.grey.shade300),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
-                                    ),
-                                    filled: true,
-                                    fillColor: isOff ? Colors.grey.shade50 : AppColors.primary.withValues(alpha: 0.04),
-                                  ),
-                                  icon: const FaIcon(FontAwesomeIcons.caretDown, color: AppColors.textSecondary),
-                                  items: adminShiftTemplates.map((shift) {
-                                    final isShiftOff = shift.id == 'off';
-                                    return DropdownMenuItem<String>(
-                                      value: shift.id,
-                                      child: Text(
-                                        shift.displayName,
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: isShiftOff ? FontWeight.normal : FontWeight.w600,
-                                          color: isShiftOff ? Colors.grey.shade600 : AppColors.textPrimary,
-                                        ),
-                                      ),
-                                    );
-                                  }).toList(),
-                                  onChanged: (val) {
-                                    if (val != null) _onSelectShift(day, val);
-                                  },
-                                ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNoteSection(WeekRegistrationData weekData) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header Note
-          Row(
-            children: [
-              FaIcon(FontAwesomeIcons.penToSquare, size: 18, color: Colors.amber.shade700),
-              const SizedBox(width: 6),
-              const Text(
-                'Ghi chú nguyện vọng',
-                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-              ),
-              const Spacer(),
-              if (_isPastWeek)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text('Chỉ xem', style: TextStyle(fontSize: 10.5, color: Colors.grey.shade600)),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-
-          // STATE 1: CHƯA GỬI - Hiển thị ô nhập + nút Gửi
-          if (!weekData.noteSent && !_isEditingNote) ...[
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _noteController,
-                    maxLines: 3,
-                    readOnly: _isPastWeek,
-                    decoration: InputDecoration(
-                      hintText: _isPastWeek
-                          ? 'Không có ghi chú nào được gửi'
-                          : 'Nhập nguyện vọng của bạn (ưu tiên ca, xin nghỉ đặc biệt, v.v.)',
-                      hintStyle: TextStyle(fontSize: 12.5, color: Colors.grey.shade500),
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.all(14),
-                    ),
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  if (!_isPastWeek)
-                    Container(
-                      decoration: BoxDecoration(
-                        border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    elevation: isRegistered ? 1 : 0.3,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      side: BorderSide(
+                        color: isRegistered
+                            ? AppColors.primary
+                            : Colors.grey.shade200,
+                        width: isRegistered ? 1.5 : 1.0,
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    color: isRegistered
+                        ? AppColors.primary.withValues(alpha: 0.04)
+                        : Colors.white,
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          ElevatedButton.icon(
-                            onPressed: _sendNote,
-                            icon: const FaIcon(FontAwesomeIcons.paperPlane, size: 15),
-                            label: const Text('Gửi'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primary,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-                              textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                              elevation: 0,
+                          // Icon ca làm việc
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: isRegistered
+                                  ? AppColors.primary.withValues(alpha: 0.12)
+                                  : shiftColor.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Center(
+                              child: Icon(
+                                shiftIcon,
+                                size: 22,
+                                color: isRegistered ? AppColors.primary : shiftColor,
+                              ),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
+                          const SizedBox(width: 14),
 
-          // STATE 2: ĐÃ GỬI & KHÔNG ĐANG SỬA - Hiển thị note + nút Sửa
-          if (weekData.noteSent && !_isEditingNote) ...[
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.amber.shade50,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.amber.shade200),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    weekData.note ?? '',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.brown.shade800,
-                      fontStyle: FontStyle.italic,
-                      height: 1.5,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      FaIcon(FontAwesomeIcons.circleCheck, size: 13, color: Colors.green.shade600),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Đã gửi cho quản lý',
-                        style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Colors.green.shade700),
-                      ),
-                      const Spacer(),
-                      if (!_isPastWeek)
-                        InkWell(
-                          onTap: _startEditNote,
-                          borderRadius: BorderRadius.circular(8),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.amber.shade300),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
+                          // Tên ca & Giờ làm
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                FaIcon(FontAwesomeIcons.penToSquare, size: 14, color: Colors.amber.shade800),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Sửa',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.amber.shade800,
-                                  ),
+                                Row(
+                                  children: [
+                                    Text(
+                                      shift.name,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 15,
+                                        color: isRegistered ? AppColors.primary : AppColors.textPrimary,
+                                      ),
+                                    ),
+                                    if (isRegistered) ...[
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primary,
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: const Text(
+                                          'Đã đăng ký',
+                                          style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    FaIcon(FontAwesomeIcons.clock, size: 12, color: Colors.grey.shade500),
+                                    const SizedBox(width: 5),
+                                    Text(
+                                      shift.timeRange,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                        color: Colors.grey.shade700,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
                           ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
 
-          // STATE 3: ĐANG SỬA - Hiển thị ô nhập + nút Lưu & Hủy
-          if (_isEditingNote) ...[
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.primary.withValues(alpha: 0.5), width: 1.5),
-              ),
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _noteController,
-                    maxLines: 3,
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      hintText: 'Chỉnh sửa nguyện vọng của bạn...',
-                      hintStyle: TextStyle(fontSize: 12.5, color: Colors.grey),
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.all(14),
+                          // Nút dấu cộng (+) để đăng ký ca
+                          if (!isLocked)
+                            Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () {
+                                  _onToggleShift(selectedDay, shift);
+                                },
+                                borderRadius: BorderRadius.circular(12),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    color: isRegistered
+                                        ? AppColors.primary
+                                        : AppColors.primary.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: isRegistered
+                                          ? AppColors.primary
+                                          : AppColors.primary.withValues(alpha: 0.25),
+                                      width: 1.2,
+                                    ),
+                                  ),
+                                  child: Center(
+                                    child: FaIcon(
+                                      isRegistered ? FontAwesomeIcons.check : FontAwesomeIcons.plus,
+                                      size: 16,
+                                      color: isRegistered ? Colors.white : AppColors.primary,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            )
+                          else
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Center(
+                                child: FaIcon(
+                                  isRegistered ? FontAwesomeIcons.check : FontAwesomeIcons.lock,
+                                  size: 14,
+                                  color: isRegistered ? AppColors.primary : Colors.grey.shade400,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  Container(
-                    decoration: BoxDecoration(
-                      border: Border(top: BorderSide(color: Colors.grey.shade200)),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        // Nút Hủy
-                        OutlinedButton(
-                          onPressed: () {
-                            setState(() {
-                              _noteController.text = weekData.note ?? '';
-                              _isEditingNote = false;
-                            });
-                          },
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          ),
-                          child: const Text('Hủy'),
-                        ),
-                        const SizedBox(width: 8),
-                        // Nút Lưu
-                        ElevatedButton.icon(
-                          onPressed: _saveNote,
-                          icon: const FaIcon(FontAwesomeIcons.floppyDisk, size: 15),
-                          label: const Text('Lưu'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            elevation: 0,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+                  );
+                }),
+              ],
             ),
-          ],
+          ),
         ],
       ),
     );

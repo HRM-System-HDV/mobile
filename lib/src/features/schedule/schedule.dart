@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/state/user_scope.dart';
 import 'schedule_service.dart';
 import 'shift_repository.dart';
 import 'shift_detail.dart';
@@ -28,18 +29,29 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   // Set lưu các ngày đang được mở rộng (expanded)
   final Set<String> _expandedDays = {};
   List<ApiShiftModel> _apiShifts = [];
+  String? _loadedUserId;
 
   @override
   void initState() {
     super.initState();
     final todayFormatted = '${_today.day.toString().padLeft(2, '0')}/${_today.month.toString().padLeft(2, '0')}';
     _expandedDays.add(todayFormatted);
-    _loadShifts();
   }
 
-  Future<void> _loadShifts() async {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final user = UserScope.currentUser(context);
+    final uid = user?.id ?? user?.email ?? '';
+    if (_loadedUserId != uid) {
+      _loadedUserId = uid;
+      _loadShifts(employeeId: uid.isNotEmpty ? uid : null);
+    }
+  }
+
+  Future<void> _loadShifts({String? employeeId}) async {
     try {
-      final shifts = await ShiftRepository().getShifts();
+      final shifts = await ShiftRepository().getShifts(employeeId: employeeId);
       // Gán vô điều kiện kể cả rỗng để hiện empty-state, không giữ mock.
       if (mounted) {
         setState(() {
@@ -344,6 +356,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         children: [
           // Header of the Day (Clickable to expand/collapse)
           InkWell(
+            borderRadius: BorderRadius.circular(16),
             onTap: () {
               setState(() {
                 if (isExpanded) {

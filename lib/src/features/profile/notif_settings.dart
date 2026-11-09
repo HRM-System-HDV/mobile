@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
 import '../notifications/notification_repository.dart';
 
@@ -57,21 +58,43 @@ class _NotificationSettingsScreenState extends State<NotificationSettingsScreen>
           if (data['vibrateEnabled'] is bool) _vibrateEnabled = data['vibrateEnabled'] == true;
         });
       }
-    } catch (_) {
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Không tải được cài đặt thông báo: ${e is ApiException ? e.message : e}'),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _saveSetting(String key, bool value, String label) async {
-    _showSavedToast(label, value);
     try {
       final user = UserScope.currentUser(context);
       await _repo.updateSettings({
         if (user?.id != null) 'userId': user!.id,
         key: value,
       });
-    } catch (_) {}
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ Không lưu được "$label": ${e is ApiException ? e.message : e}'),
+          backgroundColor: AppColors.error,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    _showSavedToast(label, value);
   }
 
   void _showSavedToast(String label, bool value) {

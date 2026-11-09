@@ -9,7 +9,8 @@ import '../../features/home/main_nav.dart';
 /// Chuẩn go_router + MaterialApp.router:
 /// - `/` → Splash kiểm tra phiên
 /// - `/login` → Đăng nhập
-/// - `/main` → Shell chính (IndexedStack 4 tabs), nhận [UserModel] qua `extra`.
+/// - `/main` → Shell chính (IndexedStack 4 tabs), bắt buộc [UserModel] qua `extra`;
+///   thiếu thì redirect về `/` để xác thực lại.
 class AppRouter {
   static final GoRouter router = GoRouter(
     initialLocation: '/',
@@ -27,16 +28,11 @@ class AppRouter {
       GoRoute(
         path: '/main',
         name: 'main',
-        builder: (context, state) {
-          final user = state.extra as UserModel? ??
-              const UserModel(
-                name: 'Trần Minh Tuấn',
-                email: 'admin@company.com',
-                role: 'admin',
-                roleTitle: 'Quản trị viên',
-              );
-          return MainNavigationScreen(currentUser: user);
-        },
+        // Thiếu user thật thì quay về splash xác thực lại, không tự dựng danh tính.
+        redirect: (context, state) => state.extra is UserModel ? null : '/',
+        builder: (context, state) => MainNavigationScreen(
+          currentUser: state.extra as UserModel,
+        ),
       ),
     ],
   );

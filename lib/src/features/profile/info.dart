@@ -3,9 +3,11 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/constants/colors.dart';
 import '../../core/models/user.dart';
+import '../../core/network/api_client.dart';
 import '../../core/services/upload_service.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/utils/image_helper.dart';
 import '../auth/auth_repository.dart';
 import 'employee_repository.dart';
 
@@ -79,6 +81,31 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
     super.dispose();
   }
 
+  DateTime _pickerDate(String ddMmYyyy, DateTime fallback) {
+    final parts = ddMmYyyy.split('/');
+    if (parts.length != 3) return fallback;
+    final d = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    final y = int.tryParse(parts[2]);
+    if (d == null || m == null || y == null) return fallback;
+    return DateTime(y, m, d);
+  }
+
+  String _errorText(Object e) =>
+      e is ApiException ? e.message : 'Không kết nối được máy chủ, vui lòng thử lại.';
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.error,
+        content: Text('❌ $message'),
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
   void _handleAutoLeave() {
     showDialog(
       context: context,
@@ -93,14 +120,24 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
             onPressed: () async {
               Navigator.pop(ctx);
               final current = UserScope.currentUser(context);
-              if (current != null) {
-                await EmployeeRepository().leaveJob(current.id).catchError((_) {});
-                if (!mounted) return;
-                UserScope.setUser(context, null);
+              if (current == null) {
+                _showError('Không xác định được người dùng đang đăng nhập.');
+                return;
               }
-              await AuthRepository().logout().catchError((_) {});
+              try {
+                await EmployeeRepository().leaveJob(current.id);
+              } catch (e) {
+                _showError('Chưa ghi nhận thôi việc: ${_errorText(e)}');
+                return;
+              }
               if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: AppColors.error, content: Text('✅ Đã xác nhận — bạn đã đăng xuất khỏi hệ thống.')));
+              // Đã ghi nhận thôi việc thì phải đăng xuất được, kể cả khi API logout lỗi.
+              try {
+                await AuthRepository().logout();
+              } catch (_) {}
+              if (!mounted) return;
+              UserScope.setUser(context, null);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: AppColors.error, content: Text('✅ Đã xác nhận thôi việc — bạn đã đăng xuất khỏi hệ thống.')));
               Navigator.pop(context);
             },
             child: const Text('Xác nhận nghỉ', style: TextStyle(color: Colors.white)),
@@ -111,44 +148,85 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
   }
 
   Future<void> _toggleEdit() async {
-    if (_isEditing) {
-      // Lưu qua API thật với await/try-catch đàng hoàng.
-      final current = UserScope.currentUser(context);
-      final newPhone = _phoneCtrl.text.trim();
-      final newName = _nameCtrl.text.trim();
-      setState(() {
-        _cccd = _cccdCtrl.text.trim();
-        _isEditing = false;
-      });
-      if (current != null) {
-        try {
-          await EmployeeRepository().updateEmployee(current.id, {
-            if (newName.isNotEmpty) 'name': newName,
-            if (newPhone.isNotEmpty) 'phone': newPhone,
-            'cccd': _cccd,
-            if (_avatarUrl != null) 'avatarUrl': _avatarUrl,
-            if (_cccdFrontUrl != null) 'cccdFrontUrl': _cccdFrontUrl,
-            if (_cccdBackUrl != null) 'cccdBackUrl': _cccdBackUrl,
-          });
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: AppColors.success, content: Text('✅ Đã lưu thông tin cá nhân')));
-        } catch (_) {
-          if (!mounted) return;
-          setState(() => _isEditing = true);
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: AppColors.error, content: Text('❌ Lưu thất bại, vui lòng thử lại')));
-        }
-      } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: AppColors.error, content: Text('❌ Không xác định được người dùng')));
-      }
-    } else {
+    if (!_isEditing) {
       setState(() => _isEditing = true);
+      return;
     }
+    final current = UserScope.currentUser(context);
+    if (current == null) {
+      _showError('Không xác định được người dùng đang đăng nhập.');
+      return;
+    }
+    final newName = _nameCtrl.text.trim();
+    final newPhone = _phoneCtrl.text.trim();
+    final newCccd = _cccdCtrl.text.trim();
+    try {
+      // Backend chỉ nhận avatar/cccdFront/cccdBack; gửi *Url sẽ bị 403.
+      await EmployeeRepository().updateEmployee(current.id, {
+        'name': newName,
+        'phone': newPhone,
+        'cccd': newCccd,
+        'birthDate': _birthDate,
+        'issueDate': _issueDate,
+        if (_avatarUrl != null) 'avatar': _avatarUrl,
+        if (_cccdFrontUrl != null) 'cccdFront': _cccdFrontUrl,
+        if (_cccdBackUrl != null) 'cccdBack': _cccdBackUrl,
+      });
+    } catch (e) {
+      _showError('Lưu thất bại: ${_errorText(e)}');
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _cccd = newCccd;
+      _isEditing = false;
+    });
+    // Đồng bộ lại UserScope để tên/SĐT/ảnh mới hiện ngay ở mọi màn hình.
+    UserScope.setUser(
+      context,
+      current.copyWith(
+        name: newName.isNotEmpty ? newName : null,
+        phone: newPhone,
+        cccd: newCccd,
+        birthDate: _birthDate,
+        issueDate: _issueDate,
+        avatarUrl: _avatarUrl,
+        cccdFrontUrl: _cccdFrontUrl,
+        cccdBackUrl: _cccdBackUrl,
+      ),
+    );
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: AppColors.success, content: Text('✅ Đã lưu thông tin cá nhân')));
+  }
+
+  String _formatDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+  Future<void> _pickBirthDate() async {
+    final now = DateTime.now();
+    final first = DateTime(1950);
+    var init = _pickerDate(_birthDate, now);
+    if (init.isAfter(now)) init = now;
+    if (init.isBefore(first)) init = first;
+    final d = await showDatePicker(context: context, initialDate: init, firstDate: first, lastDate: now);
+    if (d == null || !mounted) return;
+    setState(() => _birthDate = _formatDate(d));
+  }
+
+  Future<void> _pickIssueDate() async {
+    final now = DateTime.now();
+    final first = DateTime(1950);
+    var init = _pickerDate(_issueDate, now);
+    if (init.isAfter(now)) init = now;
+    if (init.isBefore(first)) init = first;
+    final d = await showDatePicker(context: context, initialDate: init, firstDate: first, lastDate: now);
+    if (d == null || !mounted) return;
+    setState(() => _issueDate = _formatDate(d));
   }
 
   Future<void> _pickAndUploadPhoto({
     required String title,
     required String folder,
+    required String field,
     required ValueChanged<String> onUploaded,
   }) async {
     final source = await showModalBottomSheet<ImageSource>(
@@ -200,33 +278,35 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
         );
       }
       final url = await UploadService().pickAndUploadImage(source: source, folder: folder);
-      if (url != null && mounted) {
-        onUploaded(url);
-        final current = UserScope.currentUser(context);
-        if (current != null) {
-          await EmployeeRepository().updateEmployee(current.id, {
-            if (_avatarUrl != null) 'avatarUrl': _avatarUrl,
-            if (_cccdFrontUrl != null) 'cccdFrontUrl': _cccdFrontUrl,
-            if (_cccdBackUrl != null) 'cccdBackUrl': _cccdBackUrl,
-          }).catchError((_) => <String, dynamic>{});
-        }
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: AppColors.success,
-            content: Text('✓ Tải ảnh lên Cloudinary thành công!'),
-            duration: Duration(seconds: 2),
-          ),
-        );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      if (url == null) return;
+      final current = UserScope.currentUser(context);
+      if (current == null) {
+        _showError('Không xác định được người dùng đang đăng nhập.');
+        return;
       }
+      // Ảnh đã lên Cloudinary nhưng chưa gắn vào hồ sơ thì vẫn là chưa lưu.
+      await EmployeeRepository().updateEmployee(current.id, {field: url});
+      if (!mounted) return;
+      onUploaded(url);
+      // Đồng bộ UserScope để avatar/CCCD mới hiện ngay ở mọi màn hình.
+      if (field == 'avatar') {
+        UserScope.setUser(context, current.copyWith(avatarUrl: url));
+      } else if (field == 'cccdFront') {
+        UserScope.setUser(context, current.copyWith(cccdFrontUrl: url));
+      } else if (field == 'cccdBack') {
+        UserScope.setUser(context, current.copyWith(cccdBackUrl: url));
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: AppColors.success,
+          content: Text('✓ Đã tải ảnh lên và lưu vào hồ sơ!'),
+          duration: Duration(seconds: 2),
+        ),
+      );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lỗi tải ảnh: $e')),
-        );
-      }
+      _showError('Lỗi tải ảnh: ${_errorText(e)}');
     }
   }
 
@@ -263,6 +343,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
                 onTap: () => _pickAndUploadPhoto(
                   title: 'Cập nhật ảnh đại diện',
                   folder: 'hrm/avatars',
+                  field: 'avatar',
                   onUploaded: (url) => setState(() => _avatarUrl = url),
                 ),
                 child: Stack(
@@ -270,10 +351,8 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
                     CircleAvatar(
                       radius: 32,
                       backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-                      backgroundImage: (_avatarUrl != null && _avatarUrl!.isNotEmpty)
-                          ? NetworkImage(_avatarUrl!)
-                          : null,
-                      child: (_avatarUrl == null || _avatarUrl!.isEmpty)
+                      backgroundImage: parseImageProvider(_avatarUrl),
+                      child: parseImageProvider(_avatarUrl) == null
                           ? FaIcon(widget.isManager ? FontAwesomeIcons.userShield : FontAwesomeIcons.person, color: AppColors.primary, size: 32)
                           : null,
                     ),
@@ -304,7 +383,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
           _card(children: [
             _editableRow('Họ và tên', _nameCtrl, FontAwesomeIcons.user, enabled: _isEditing),
             _divider(),
-            _row('Ngày sinh', _birthDate, FontAwesomeIcons.cakeCandles, onTap: _isEditing ? () async { final d = await showDatePicker(context: context, initialDate: DateTime(1998, 3, 15), firstDate: DateTime(1950), lastDate: DateTime.now()); if (d != null) setState(() => _birthDate = '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}/${d.year}'); } : null),
+            _row('Ngày sinh', _birthDate, FontAwesomeIcons.cakeCandles, onTap: _isEditing ? _pickBirthDate : null),
             _divider(),
             _row('Giới tính', _gender, FontAwesomeIcons.restroom),
             _divider(),
@@ -333,7 +412,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
           _card(children: [
             _editableRow('Số CCCD', _cccdCtrl, FontAwesomeIcons.idCard, enabled: _isEditing),
             _divider(),
-            _row('Ngày cấp', _issueDate, FontAwesomeIcons.calendarDays, onTap: _isEditing ? () async { final d = await showDatePicker(context: context, initialDate: DateTime(2021, 5, 20), firstDate: DateTime(2000), lastDate: DateTime.now()); if (d != null) setState(() => _issueDate = '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}/${d.year}'); } : null),
+            _row('Ngày cấp', _issueDate, FontAwesomeIcons.calendarDays, onTap: _isEditing ? _pickIssueDate : null),
             _divider(),
             _row('Nơi cấp', _issuePlace, FontAwesomeIcons.locationDot),
             _divider(),
@@ -348,6 +427,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
                   _pickAndUploadPhoto(
                     title: 'Tải ảnh CCCD mặt trước',
                     folder: 'hrm/cccd',
+                    field: 'cccdFront',
                     onUploaded: (url) => setState(() => _cccdFrontUrl = url),
                   );
                 }),
@@ -356,6 +436,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
                   _pickAndUploadPhoto(
                     title: 'Tải ảnh CCCD mặt sau',
                     folder: 'hrm/cccd',
+                    field: 'cccdBack',
                     onUploaded: (url) => setState(() => _cccdBackUrl = url),
                   );
                 }),
@@ -406,32 +487,39 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
 
   Widget _divider() => Divider(height: 1, indent: 46, color: Colors.grey.shade200);
 
-  Widget _cccdThumb(String label, String? url, VoidCallback onTap) => InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          width: 70,
-          height: 48,
-          decoration: BoxDecoration(
-            color: (url != null && url.isNotEmpty) ? Colors.transparent : Colors.green.shade50,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: (url != null && url.isNotEmpty) ? AppColors.primary : Colors.green.shade200),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: (url != null && url.isNotEmpty)
-              ? Image.network(
-                  url,
+  Widget _cccdThumb(String label, String? url, VoidCallback onTap) {
+    final imageProvider = parseImageProvider(url);
+    final hasImage = imageProvider != null;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 70,
+        height: 48,
+        decoration: BoxDecoration(
+          color: hasImage ? Colors.transparent : Colors.green.shade50,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: hasImage ? AppColors.primary : Colors.green.shade200),
+          image: hasImage
+              ? DecorationImage(
+                  image: imageProvider,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image, size: 18, color: Colors.grey)),
                 )
-              : Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const FaIcon(FontAwesomeIcons.camera, size: 14, color: Colors.green),
-                    const SizedBox(height: 2),
-                    Text(label, style: const TextStyle(fontSize: 9, color: Colors.green, fontWeight: FontWeight.w600)),
-                  ],
-                ),
+              : null,
         ),
-      );
+        clipBehavior: Clip.antiAlias,
+        child: hasImage
+            ? null
+            : Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const FaIcon(FontAwesomeIcons.camera, size: 14, color: Colors.green),
+                  const SizedBox(height: 2),
+                  Text(label, style: const TextStyle(fontSize: 9, color: Colors.green, fontWeight: FontWeight.w600)),
+                ],
+              ),
+      ),
+    );
+  }
 }

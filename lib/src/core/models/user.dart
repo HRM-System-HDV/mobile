@@ -9,6 +9,7 @@ class UserModel {
 
   /// Chi nhánh được gán cho nhân sự (Admin và Manager cũng thuộc chi nhánh/HQ).
   final String? assignedBranchId;
+  final String? branchSlug;
 
   /// Thông tin cá nhân & Địa chỉ cư trú (đồng bộ hệ thống)
   final String gender;
@@ -43,6 +44,7 @@ class UserModel {
     required this.role,
     required this.roleTitle,
     this.assignedBranchId,
+    this.branchSlug,
     this.gender = '',
     this.birthDate = '',
     this.province = '',
@@ -67,4 +69,58 @@ class UserModel {
   bool get isStaff => role == 'staff' || role == 'employee';
   bool get canManage => isAdmin || isManager;
   bool get isHourlySalary => salaryType == 'hourly';
+
+  /// `null` ở các trường tham chiếu có nghĩa là "giữ nguyên giá trị cũ".
+  UserModel copyWith({
+    String? name,
+    String? phone,
+    String? roleTitle,
+    String? assignedBranchId,
+    String? branchSlug,
+    String? gender,
+    String? birthDate,
+    String? province,
+    String? ward,
+    String? street,
+    String? cccd,
+    String? issueDate,
+    String? issuePlace,
+    String? salaryType,
+    double? hourlySalary,
+    double? baseSalary,
+    String? bankName,
+    String? bankAccountNumber,
+    String? bankAccountName,
+    String? avatarUrl,
+    String? cccdFrontUrl,
+    String? cccdBackUrl,
+  }) {
+    return UserModel(
+      id: id,
+      name: name ?? this.name,
+      email: email,
+      phone: phone ?? this.phone,
+      role: role,
+      roleTitle: roleTitle ?? this.roleTitle,
+      assignedBranchId: assignedBranchId ?? this.assignedBranchId,
+      branchSlug: branchSlug ?? this.branchSlug,
+      gender: gender ?? this.gender,
+      birthDate: birthDate ?? this.birthDate,
+      province: province ?? this.province,
+      ward: ward ?? this.ward,
+      street: street ?? this.street,
+      cccd: cccd ?? this.cccd,
+      issueDate: issueDate ?? this.issueDate,
+      issuePlace: issuePlace ?? this.issuePlace,
+      salaryType: salaryType ?? this.salaryType,
+      hourlySalary: hourlySalary ?? this.hourlySalary,
+      baseSalary: baseSalary ?? this.baseSalary,
+      bankName: bankName ?? this.bankName,
+      bankAccountNumber: bankAccountNumber ?? this.bankAccountNumber,
+      bankAccountName: bankAccountName ?? this.bankAccountName,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+      cccdFrontUrl: cccdFrontUrl ?? this.cccdFrontUrl,
+      cccdBackUrl: cccdBackUrl ?? this.cccdBackUrl,
+    );
+  }
 }
