@@ -24,12 +24,7 @@ class OperationsScreen extends StatelessWidget {
 
   const OperationsScreen({
     super.key,
-    this.currentUser = const UserModel(
-      name: 'Nguyễn Thu Hà',
-      email: 'nhanvien@company.com',
-      role: 'staff',
-      roleTitle: 'Nhân viên',
-    ),
+    required this.currentUser,
     this.onReturnHome,
   });
 
@@ -45,9 +40,9 @@ class OperationsScreen extends StatelessWidget {
         centerTitle: true,
         elevation: 0,
         automaticallyImplyLeading: false,
-        title: Text(
-          canManage ? 'Danh mục tác vụ quản trị' : 'Danh mục tác vụ nhân sự',
-          style: const TextStyle(
+        title: const Text(
+          'Tác vụ',
+          style: TextStyle(
             color: AppColors.textPrimary,
             fontWeight: FontWeight.bold,
             fontSize: 18,
@@ -68,8 +63,7 @@ class OperationsScreen extends StatelessWidget {
               AppColors.primary,
             ),
             _buildFeatureCard(
-              title: 'Giám sát nhân sự trực tiếp',
-              subtitle: 'Theo dõi nhân viên đang có mặt trong ca và chấm công thực tế',
+              title: isAdmin ? 'Nhân sự toàn công ty' : 'Nhân sự chi nhánh',
               icon: FontAwesomeIcons.users,
               iconColor: Colors.indigo,
               badgeText: isAdmin ? 'Toàn hệ thống' : 'Chi nhánh',
@@ -82,8 +76,7 @@ class OperationsScreen extends StatelessWidget {
               },
             ),
             _buildFeatureCard(
-              title: 'Phê duyệt yêu cầu nhân sự',
-              subtitle: 'Duyệt đơn đổi ca, nghỉ phép, bổ sung công và tạm ứng',
+              title: isAdmin ? 'Phê duyệt yêu cầu' : 'Duyệt yêu cầu chi nhánh',
               icon: FontAwesomeIcons.circleCheck,
               iconColor: Colors.orange.shade800,
               badgeText: 'Chờ duyệt',
@@ -96,8 +89,7 @@ class OperationsScreen extends StatelessWidget {
               },
             ),
             _buildFeatureCard(
-              title: 'Xếp ca',
-              subtitle: 'Phân công ca làm việc theo ngày, quản lý nhân sự trực ca & lặp lại',
+              title: 'Phân ca làm việc',
               icon: FontAwesomeIcons.calendarPlus,
               iconColor: AppColors.primary,
               badgeText: 'Xếp ca',
@@ -110,8 +102,7 @@ class OperationsScreen extends StatelessWidget {
               },
             ),
             _buildFeatureCard(
-              title: 'Giao việc & Quản lý nhiệm vụ',
-              subtitle: 'Giao việc trực tiếp cho nhân sự và theo dõi tiến độ hoàn thành',
+              title: 'Giao việc & Nhiệm vụ',
               icon: FontAwesomeIcons.listCheck,
               iconColor: AppColors.primary,
               badgeText: 'Giao việc',
@@ -124,8 +115,7 @@ class OperationsScreen extends StatelessWidget {
               },
             ),
             _buildFeatureCard(
-              title: 'Cấu hình Wi-Fi chấm công',
-              subtitle: 'Thiết lập danh sách SSID Wi-Fi xác thực chấm công',
+              title: isAdmin ? 'Cấu hình Wi-Fi' : 'Wi-Fi chi nhánh',
               icon: FontAwesomeIcons.wifi,
               iconColor: Colors.teal.shade700,
               badgeText: 'Wi-Fi Check',
@@ -148,7 +138,6 @@ class OperationsScreen extends StatelessWidget {
           ),
           _buildFeatureCard(
             title: 'Lịch làm việc chung',
-            subtitle: 'Xem lịch phân công ca toàn bộ chi nhánh',
             icon: FontAwesomeIcons.calendarDays,
             iconColor: Colors.blue,
             badgeText: 'Chi nhánh',
@@ -162,7 +151,6 @@ class OperationsScreen extends StatelessWidget {
           ),
           _buildFeatureCard(
             title: 'Đăng ký ca làm việc',
-            subtitle: 'Đăng ký ca làm mong muốn cho tuần kế tiếp',
             icon: FontAwesomeIcons.calendarPlus,
             iconColor: const Color(0xFF1A73E8),
             badgeText: 'Tuần tới',
@@ -176,7 +164,6 @@ class OperationsScreen extends StatelessWidget {
           ),
           _buildFeatureCard(
             title: 'Đăng ký nghỉ phép',
-            subtitle: 'Tạo đơn xin nghỉ phép năm, nghỉ ốm, việc riêng',
             icon: FontAwesomeIcons.umbrellaBeach,
             iconColor: Colors.orange,
             badgeText: 'Phép năm',
@@ -189,8 +176,7 @@ class OperationsScreen extends StatelessWidget {
             },
           ),
           _buildFeatureCard(
-            title: 'Công việc cần làm theo ca',
-            subtitle: 'Xem danh sách nhiệm vụ được giao và quy trình theo ca',
+            title: 'Giao việc & Nhiệm vụ',
             icon: FontAwesomeIcons.listCheck,
             iconColor: const Color(0xFF2563EB),
             badgeText: 'Việc của tôi',
@@ -212,7 +198,6 @@ class OperationsScreen extends StatelessWidget {
           ),
           _buildFeatureCard(
             title: 'Bổ sung / sửa chấm công',
-            subtitle: 'Gửi yêu cầu giải trình khi quên check-in / check-out',
             icon: FontAwesomeIcons.penToSquare,
             iconColor: Colors.teal,
             badgeText: 'Bù công',
@@ -233,8 +218,9 @@ class OperationsScreen extends StatelessWidget {
             const Color(0xFF2E7D32),
           ),
           _buildFeatureCard(
-            title: 'Kỳ lương & Phiếu lương cá nhân',
-            subtitle: 'Xem chi tiết số công, giờ làm thực tế và thu nhập của tôi',
+            title: isAdmin
+                ? 'Phiếu lương toàn công ty'
+                : (canManage ? 'Bảng công & Lương chi nhánh' : 'Kỳ lương & Phiếu lương cá nhân'),
             icon: FontAwesomeIcons.receipt,
             iconColor: const Color(0xFF2E7D32),
             badgeText: 'Phiếu lương',
@@ -248,7 +234,6 @@ class OperationsScreen extends StatelessWidget {
           ),
           _buildFeatureCard(
             title: 'Tạm ứng lương',
-            subtitle: 'Nộp yêu cầu tạm ứng trước kỳ tính lương',
             icon: FontAwesomeIcons.wallet,
             iconColor: const Color(0xFFFB8C00),
             badgeText: 'Tạm ứng',
@@ -269,8 +254,7 @@ class OperationsScreen extends StatelessWidget {
             const Color(0xFFE53935),
           ),
           _buildFeatureCard(
-            title: 'Bảng tin nội bộ',
-            subtitle: 'Xem thông báo chung, lịch nghỉ lễ và khen thưởng',
+            title: 'Bảng tin & Thông báo',
             icon: FontAwesomeIcons.newspaper,
             iconColor: Colors.blueGrey,
             badgeText: 'Bản tin',
@@ -283,8 +267,7 @@ class OperationsScreen extends StatelessWidget {
             },
           ),
           _buildFeatureCard(
-            title: 'Nội quy công ty',
-            subtitle: 'Sổ tay quy định giờ giấc, tác phong và chế độ phúc lợi',
+            title: 'Nội quy & Quy định',
             icon: FontAwesomeIcons.gavel,
             iconColor: const Color(0xFF6A1B9A),
             badgeText: 'Nội quy',
@@ -292,7 +275,7 @@ class OperationsScreen extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const CompanyRegulationsScreen()),
+                MaterialPageRoute(builder: (_) => CompanyRegulationsScreen(currentUser: currentUser)),
               );
             },
           ),
@@ -306,7 +289,6 @@ class OperationsScreen extends StatelessWidget {
           ),
           _buildFeatureCard(
             title: 'Câu hỏi thường gặp & Trợ giúp',
-            subtitle: 'Hướng dẫn chấm công, quy trình đổi ca và hỗ trợ nhân sự',
             icon: FontAwesomeIcons.circleQuestion,
             iconColor: const Color(0xFF0288D1),
             badgeText: 'FAQ',
@@ -341,7 +323,7 @@ class OperationsScreen extends StatelessWidget {
 
   Widget _buildFeatureCard({
     required String title,
-    required String subtitle,
+    String? subtitle,
     required FaIconData icon,
     required Color iconColor,
     required String badgeText,
@@ -359,7 +341,7 @@ class OperationsScreen extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
         child: Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14)),
           child: Row(
             children: [
@@ -379,10 +361,26 @@ class OperationsScreen extends StatelessWidget {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary)),
-                    const SizedBox(height: 3),
-                    Text(subtitle, style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary)),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    if (subtitle != null && subtitle.trim().isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
+import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import 'leave_repository.dart';
 
@@ -31,20 +33,28 @@ class LeaveRequestScreen extends StatefulWidget {
 
 class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
   final LeaveRepository _leaveRepo = LeaveRepository();
+  String? _loadedUserId;
+  String? _loadError;
 
   @override
-  void initState() {
-    super.initState();
-    _fetchRequests();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final uid = UserScope.currentUser(context)?.id ?? '';
+    if (_loadedUserId != uid) {
+      _loadedUserId = uid;
+      _fetchRequests();
+    }
   }
 
   Future<void> _fetchRequests() async {
     try {
-      final list = await _leaveRepo.getRequests();
+      final uid = UserScope.currentUser(context)?.id ?? '';
+      // Không lọc thì nhân viên xem được đơn nghỉ của cả chi nhánh.
+      final list = await _leaveRepo.getRequests(employeeId: uid.isEmpty ? null : uid);
       if (mounted) {
         final apiItems = list.where((m) => m.type == 'leave').map((m) {
           final title = m.title.replaceFirst('Đơn xin nghỉ: ', '');
-          String d = 'Hôm nay (Cả ngày)';
+          String d = '—';
           String r = m.content;
           if (m.content.contains(' - Lý do: ')) {
             final parts = m.content.split(' - Lý do: ');
@@ -53,20 +63,23 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
           }
           return LeaveRequestItem(
             id: m.id,
-            leaveType: title.isNotEmpty ? title : 'Nghỉ phép',
+            leaveType: title.isNotEmpty ? title : '—',
             dates: d,
             reason: r,
             status: m.status,
-            createdAt: m.createdAt ?? 'Vừa xong',
+            createdAt: m.createdAt ?? '—',
           );
         }).toList();
 
         setState(() {
           _requests = apiItems;
+          _loadError = null;
         });
       }
-    } catch (_) {
-      // API lỗi thì giữ nguyên danh sách hiện tại (rỗng) để hiện empty state.
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loadError = e is ApiException ? e.message : 'Không tải được đơn nghỉ phép');
+      }
     }
   }
 
@@ -141,6 +154,40 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
                 onChanged: (val) => setModalState(() => selectedDuration = val!),
               ),
               const SizedBox(height: 12),
+              const Text('Ngày nghỉ', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              const SizedBox(height: 6),
+              InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: ctx,
+                    initialDate: selectedDate,
+                    firstDate: DateTime.now().subtract(const Duration(days: 30)),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (picked != null) setModalState(() => selectedDate = picked);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade400),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      const FaIcon(FontAwesomeIcons.calendarDay, size: 16, color: AppColors.primary),
+                      const SizedBox(width: 10),
+                      Text(
+                        '${selectedDate.day.toString().padLeft(2, '0')}/${selectedDate.month.toString().padLeft(2, '0')}/${selectedDate.year}',
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                      const Spacer(),
+                      const Text('Đổi ngày', style: TextStyle(fontSize: 12.5, color: AppColors.primary)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
               const Text('Lý do nghỉ', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
               const SizedBox(height: 6),
               TextField(
@@ -165,7 +212,16 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
                   final dateStr = '${selectedDate.day.toString().padLeft(2, '0')}/${selectedDate.month.toString().padLeft(2, '0')}/${selectedDate.year}';
                   final user = UserScope.currentUser(context);
                   final empId = user?.id ?? '';
-                  if (empId.isEmpty) return;
+                  if (empId.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        backgroundColor: AppColors.error,
+                        content: Text('❌ Không xác định được nhân sự đang đăng nhập'),
+                      ),
+                    );
+                    return;
+                  }
+                  final branchSlug = BranchScope.selectedBranch(context)?.slug ?? user?.branchSlug ?? '';
 
                   try {
                     await _leaveRepo.createRequest({
@@ -173,6 +229,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
                       'title': 'Đơn xin nghỉ: $selectedType',
                       'content': '$dateStr ($selectedDuration) - Lý do: $reason',
                       'employeeId': empId,
+                      if (branchSlug.isNotEmpty) 'branchSlug': branchSlug,
                     });
                     if (modalCtx.mounted) {
                       Navigator.pop(modalCtx);
@@ -190,7 +247,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         backgroundColor: AppColors.error,
-                        content: Text('❌ Gửi đơn xin nghỉ thất bại: $e'),
+                        content: Text('❌ Gửi đơn xin nghỉ thất bại: ${e is ApiException ? e.message : e}'),
                       ),
                     );
                   }
@@ -231,47 +288,6 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
         child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Thẻ hạn mức phép năm
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF2563EB).withValues(alpha: 0.3),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Phép năm còn lại', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                    const SizedBox(height: 4),
-                    const Text('10 / 12 ngày', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 2),
-                    Text('Đã dùng 2 ngày • Hạn đến 31/12/${DateTime.now().year}', style: const TextStyle(color: Colors.white70, fontSize: 11)),
-                  ],
-                ),
-                const CircleAvatar(
-                  radius: 26,
-                  backgroundColor: Colors.white24,
-                  child: FaIcon(FontAwesomeIcons.umbrellaBeach, color: Colors.white, size: 28),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-
           const Text('Lịch sử đơn nghỉ phép', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
           const SizedBox(height: 10),
 
@@ -279,11 +295,27 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
             Container(
               padding: const EdgeInsets.symmetric(vertical: 36),
               alignment: Alignment.center,
-              child: const Column(
+              child: Column(
                 children: [
-                  FaIcon(FontAwesomeIcons.clipboardList, size: 36, color: Colors.grey),
-                  SizedBox(height: 10),
-                  Text('Chưa có đơn nghỉ phép nào', style: TextStyle(color: AppColors.textSecondary, fontSize: 13.5)),
+                  FaIcon(
+                    _loadError != null ? FontAwesomeIcons.triangleExclamation : FontAwesomeIcons.clipboardList,
+                    size: 36,
+                    color: _loadError != null ? AppColors.error : Colors.grey,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _loadError ?? 'Chưa có đơn nghỉ phép nào',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: _loadError != null ? AppColors.error : AppColors.textSecondary,
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  if (_loadError != null) ...[
+                    const SizedBox(height: 6),
+                    const Text('Kéo xuống để thử lại.',
+                        style: TextStyle(color: AppColors.textSecondary, fontSize: 12.5)),
+                  ],
                 ],
               ),
             )

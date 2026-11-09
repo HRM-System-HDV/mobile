@@ -20,6 +20,9 @@ class NotificationRepository {
   Future<void> markRead(String id) =>
       api.putJson('/api/notifications/$id/read', {});
 
+  /// Server tự lấy phạm vi từ x-user-id/x-branch-slug đã verify, không nhận từ client.
+  Future<void> markAllRead() => api.putJson('/api/notifications/read-all', {});
+
   Future<void> deleteNotification(String id) =>
       api.delete('/api/notifications/$id');
 

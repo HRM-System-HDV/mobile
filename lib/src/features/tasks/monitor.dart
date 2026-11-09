@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/state/branch_scope.dart';
+import '../../core/state/user_scope.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../attendance/attendance_repository.dart';
 import '../profile/employee_repository.dart';
@@ -126,14 +127,13 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
 
   @override
   Widget build(BuildContext context) {
-    final int presentCount = _presentStaff.length;
-    final int lateCount = _staffList.where((s) => s.status == StaffAttendanceStatus.late).length;
-    final int absentCount = _absentStaff.length;
+    final bool isAdmin = UserScope.isAdmin(context);
+    final String pageTitle = isAdmin ? 'Nhân sự toàn công ty' : 'Nhân sự chi nhánh';
 
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Giám sát nhân sự'),
+        title: Text(pageTitle),
         backgroundColor: Colors.white,
         centerTitle: true,
         elevation: 0,
@@ -144,21 +144,6 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
       ),
       body: Column(
         children: [
-          // Summary cards
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Row(
-              children: [
-                _buildStatCard('Đang có mặt', '$presentCount', Colors.green, FontAwesomeIcons.circleCheck),
-                const SizedBox(width: 10),
-                _buildStatCard('Đi muộn', '$lateCount', Colors.orange, FontAwesomeIcons.clock),
-                const SizedBox(width: 10),
-                _buildStatCard('Vắng mặt', '$absentCount', AppColors.error, FontAwesomeIcons.circleXmark),
-              ],
-            ),
-          ),
-
           // Branch + shift info bar
           Container(
             width: double.infinity,
@@ -224,32 +209,6 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildStatCard(String label, String count, Color color, FaIconData icon) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withValues(alpha: 0.2)),
-        ),
-        child: Row(
-          children: [
-            FaIcon(icon, color: color, size: 20),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(count, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
-                Text(label, style: const TextStyle(fontSize: 10, color: AppColors.textSecondary)),
-              ],
-            ),
-          ],
-        ),
       ),
     );
   }

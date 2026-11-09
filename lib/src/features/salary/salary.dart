@@ -2,18 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/models/payslip.dart';
-import '../../core/utils/formatters.dart';
+import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
 import '../attendance/attendance_repository.dart';
 import '../leave_request/leave_repository.dart';
+import '../schedule/shift_repository.dart';
 import 'salary_repository.dart';
 
 class WorkLogItem {
   final String date;
   final String checkIn;
   final String checkOut;
-  final double hours;
-  final int basePay;
+  final double? hours;
+  final int? basePay;
   final String status;
 
   const WorkLogItem({
@@ -37,6 +38,10 @@ class _SalaryScreenState extends State<SalaryScreen> {
   late String _selectedMonth;
   late List<String> _months;
   final List<WorkLogItem> _workLogs = [];
+  int _assignedShiftCount = 0;
+  double _assignedHours = 0.0;
+  int _workedShiftCount = 0;
+  double _workedHours = 0.0;
 
   final SalaryRepository _salaryRepository = SalaryRepository();
   List<PayslipModel> _apiPayslips = const [];
@@ -85,24 +90,84 @@ class _SalaryScreenState extends State<SalaryScreen> {
     final user = UserScope.currentUser(context);
     final uid = user?.id;
     final q = _monthQuery(_selectedMonth);
+    Object? firstError;
     try {
       final items = await _salaryRepository.getPayslips(
         employeeId: uid,
         month: q.isNotEmpty ? q : null,
       );
       if (mounted) setState(() => _apiPayslips = items);
-    } catch (_) {
+    } catch (e) {
+      firstError ??= e;
       if (mounted) setState(() => _apiPayslips = []);
+    }
+
+    // Tải danh sách ca làm việc để tính số ca/giờ được phân công
+    try {
+      final allShifts = await ShiftRepository().getShifts(employeeId: uid);
+      int shiftCount = 0;
+      double hoursCount = 0.0;
+      bool hoursUnknown = false;
+      for (final s in allShifts) {
+        // Lọc theo tháng đang chọn nếu có
+        if (q.isNotEmpty && s.date.contains('-')) {
+          final parts = s.date.split('-');
+          if (parts.length >= 3) {
+            final shiftMonth = '${parts[1]}-${parts[2]}';
+            if (shiftMonth != q) continue;
+          }
+        }
+        shiftCount++;
+        final pStart = s.scheduledStart.split(':');
+        final pEnd = s.scheduledEnd.split(':');
+        if (pStart.length == 2 && pEnd.length == 2) {
+          final m1 = (int.tryParse(pStart[0]) ?? 0) * 60 + (int.tryParse(pStart[1]) ?? 0);
+          final m2 = (int.tryParse(pEnd[0]) ?? 0) * 60 + (int.tryParse(pEnd[1]) ?? 0);
+          if (m2 > m1) {
+            hoursCount += (m2 - m1) / 60.0;
+          } else {
+            hoursUnknown = true;
+          }
+        } else {
+          hoursUnknown = true;
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _assignedShiftCount = shiftCount;
+          // Có ca không xác định được giờ thì không hiển thị tổng thiếu chính xác.
+          _assignedHours = hoursUnknown ? 0.0 : hoursCount;
+        });
+      }
+    } catch (e) {
+      firstError ??= e;
+      if (mounted) {
+        setState(() {
+          _assignedShiftCount = 0;
+          _assignedHours = 0.0;
+        });
+      }
     }
 
     try {
       final atts = await AttendanceRepository().getAttendance(employeeId: uid);
       final logs = <WorkLogItem>[];
+      int doneShifts = 0;
+      double doneHours = 0.0;
+      bool hoursUnknown = false;
       for (final a in atts) {
-        final date = a.date.isNotEmpty ? a.date : 'Hôm nay';
+        // Lọc theo tháng
+        if (q.isNotEmpty && a.date.contains('-')) {
+          final parts = a.date.split('-');
+          if (parts.length >= 3) {
+            final attMonth = '${parts[1]}-${parts[2]}';
+            if (attMonth != q) continue;
+          }
+        }
+        final date = a.date.isNotEmpty ? a.date : '—';
         final checkIn = a.checkIn ?? '--:--';
         final checkOut = a.checkOut ?? '--:--';
-        double hours = 4.0;
+        double? hours;
         if (a.checkIn != null && a.checkOut != null) {
           final pIn = a.checkIn!.split(':');
           final pOut = a.checkOut!.split(':');
@@ -112,8 +177,13 @@ class _SalaryScreenState extends State<SalaryScreen> {
             if (mOut > mIn) hours = (mOut - mIn) / 60.0;
           }
         }
-        final hourlySalary = user?.hourlySalary ?? 35000.0;
-        final basePay = (hours * hourlySalary).toInt();
+        doneShifts++;
+        if (hours != null) {
+          doneHours += hours;
+        } else {
+          hoursUnknown = true;
+        }
+
         final status = a.status == 'late'
             ? 'Đi trễ'
             : (a.status == 'absent' ? 'Vắng mặt' : 'Đúng giờ');
@@ -121,8 +191,9 @@ class _SalaryScreenState extends State<SalaryScreen> {
           date: date,
           checkIn: checkIn,
           checkOut: checkOut,
-          hours: double.parse(hours.toStringAsFixed(1)),
-          basePay: basePay,
+          hours: hours != null ? double.parse(hours.toStringAsFixed(1)) : null,
+          // API chấm công không trả tiền công từng ca nên không tự tính.
+          basePay: null,
           status: status,
         ));
       }
@@ -130,15 +201,36 @@ class _SalaryScreenState extends State<SalaryScreen> {
         setState(() {
           _workLogs.clear();
           _workLogs.addAll(logs);
+          _workedShiftCount = doneShifts;
+          _workedHours = hoursUnknown ? 0.0 : doneHours;
         });
       }
-    } catch (_) {
+    } catch (e) {
+      firstError ??= e;
       if (mounted) {
         setState(() {
           _workLogs.clear();
+          _workedShiftCount = 0;
+          _workedHours = 0.0;
         });
       }
     }
+
+    if (firstError != null) {
+      _showError('Không tải đủ dữ liệu lương: '
+          '${firstError is ApiException ? firstError.message : firstError}');
+    }
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.error,
+        content: Text('❌ $message'),
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   String _formatCurrency(int amount) {    final str = amount.toString();
@@ -156,10 +248,16 @@ class _SalaryScreenState extends State<SalaryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isAdmin = UserScope.isAdmin(context);
+    final bool canManage = UserScope.canManage(context);
+    final String pageTitle = isAdmin
+        ? 'Phiếu lương toàn công ty'
+        : (canManage ? 'Bảng công & Lương chi nhánh' : 'Kỳ lương & Phiếu lương cá nhân');
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Kỳ lương & Chi tiết công'),
+        title: Text(pageTitle),
         backgroundColor: Colors.white,
         centerTitle: true,
         elevation: 0,
@@ -210,62 +308,6 @@ class _SalaryScreenState extends State<SalaryScreen> {
               ),
             ),
             const SizedBox(height: 16),
-
-            // 1b. Phiếu lương từ API thật (gateway -> payroll-service).
-            if (_apiPayslips.isEmpty)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade200),
-                ),
-                child: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Phiếu lương từ máy chủ',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                    SizedBox(height: 8),
-                    Text(
-                      'Chưa có dữ liệu phiếu lương',
-                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                    ),
-                  ],
-                ),
-              )
-            else
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade200),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Phiếu lương từ máy chủ',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                    const SizedBox(height: 8),
-                    for (final p in _apiPayslips.take(3))
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: Text(
-                          '${p.month} • ${formatVND(p.netSalary.toInt())} (cơ bản ${formatVND(p.baseSalary.toInt())} − phạt ${formatVND(p.totalPenalty.toInt())})',
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
 
             // 2. Main Net Salary Card
             Container(
@@ -339,14 +381,13 @@ class _SalaryScreenState extends State<SalaryScreen> {
                 children: [
                   _buildSalaryRow('Lương cơ bản', _currentPayslip != null ? _formatCurrency(_currentPayslip!.baseSalary.toInt()) : '—'),
                   const Divider(height: 16),
-                  // Chưa có API giờ công/ca — hiện '—' thay vì số mock.
-                  _buildSalaryRow('Số giờ làm việc được phân công', '—'),
+                  _buildSalaryRow('Số giờ làm việc được phân công', _assignedHours > 0 ? '${_assignedHours.toStringAsFixed(1)} giờ' : '—'),
                   const Divider(height: 16),
-                  _buildSalaryRow('Số ca làm việc được phân công', '—'),
+                  _buildSalaryRow('Số ca làm việc được phân công', _assignedShiftCount > 0 ? '$_assignedShiftCount ca' : '—'),
                   const Divider(height: 16),
-                  _buildSalaryRow('Số giờ làm việc tính lương', '—'),
+                  _buildSalaryRow('Số giờ làm việc tính lương', _workedHours > 0 ? '${_workedHours.toStringAsFixed(1)} giờ' : '—'),
                   const Divider(height: 16),
-                  _buildSalaryRow('Số ca làm việc tính lương', '—'),
+                  _buildSalaryRow('Số ca làm việc tính lương', _workedShiftCount > 0 ? '$_workedShiftCount ca' : '—'),
                   const Divider(height: 16),
                   _buildSalaryRow('Khấu trừ', _currentPayslip != null ? _formatCurrency(_currentPayslip!.totalPenalty.toInt()) : '—', isNegative: true),
                 ],
@@ -415,7 +456,7 @@ class _SalaryScreenState extends State<SalaryScreen> {
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                             ),
                             Text(
-                              _formatCurrency(log.basePay),
+                              log.basePay != null ? _formatCurrency(log.basePay!) : '—',
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.primary),
                             ),
                           ],
@@ -424,7 +465,7 @@ class _SalaryScreenState extends State<SalaryScreen> {
                         Row(
                           children: [
                             Text(
-                              'Vào: ${log.checkIn} - Ra: ${log.checkOut} (${log.hours}h)',
+                              'Vào: ${log.checkIn} - Ra: ${log.checkOut}${log.hours != null ? ' (${log.hours}h)' : ''}',
                               style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                             ),
                             const Spacer(),

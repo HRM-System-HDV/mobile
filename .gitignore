@@ -34,7 +34,6 @@ build/
 **/android/.gradle/
 
 # iOS / macOS build artifacts
-**/ios/Runner/Assets.xcassets/AppIcon.appiconset/
 **/ios/Flutter/App.framework
 **/ios/Flutter/Flutter.framework
 **/ios/Flutter/Flutter.podspec

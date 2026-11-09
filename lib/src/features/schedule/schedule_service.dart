@@ -8,7 +8,7 @@ class ShiftDetail {
   final String shiftName;
   final String startTime;
   final String endTime;
-  final double hours;
+  final double? hours;
   final String branch;
   final String role;
   final String status; // 'completed', 'active', 'upcoming', 'missed'
@@ -24,7 +24,8 @@ class ShiftDetail {
     required this.status,
   });
 
-  String get timeRange => '$startTime - $endTime';
+  String get timeRange =>
+      (startTime.isEmpty || endTime.isEmpty) ? '—' : '$startTime - $endTime';
 
   Color get statusColor => ScheduleService.getStatusColor(status);
   String get statusLabel => ScheduleService.getStatusLabel(status);
@@ -102,7 +103,7 @@ class ScheduleService {
   /// - Khi ca đó đã được checkin: 'active' (Đang diễn ra)
   /// - Khi đã checkout / hoàn thành: 'completed' (Đã hoàn thành)
   /// - Khi chưa đến giờ bắt đầu: 'upcoming' (Chưa đến giờ)
-  /// - Khi đã qua giờ bắt đầu mà chưa checkin: 'missed' (Quên chấm công)
+  /// - Khi đã qua giờ bắt đầu / ngày trong quá khứ mà chưa chấm công: 'missed' (Quên chấm công)
   static String calculateShiftStatus({
     required DateTime date,
     required String startTime,
@@ -117,27 +118,24 @@ class ScheduleService {
     final today = DateTime(now.year, now.month, now.day);
     final targetDate = DateTime(date.year, date.month, date.day);
 
-    // Ngày trong quá khứ mà chưa check-in -> Quên chấm công
-    if (targetDate.isBefore(today)) {
-      return 'missed';
-    }
-
     // Ngày trong tương lai -> Chưa đến giờ
     if (targetDate.isAfter(today)) {
       return 'upcoming';
     }
 
-    // Ngày hôm nay:
-    final startDt = parseShiftTime(today, startTime);
-    if (startDt != null) {
-      if (now.isBefore(startDt)) {
-        return 'upcoming'; // Chưa đến giờ
-      } else {
-        return 'missed'; // Đã qua giờ bắt đầu mà chưa check-in -> Quên chấm công
-      }
+    // Ngày trong quá khứ mà chưa chấm công -> Quên chấm công
+    if (targetDate.isBefore(today)) {
+      return 'missed';
     }
 
-    return 'upcoming';
+    // Ngày hôm nay:
+    final startDt = parseShiftTime(today, startTime);
+    if (startDt != null && now.isBefore(startDt)) {
+      return 'upcoming'; // Chưa đến giờ
+    }
+
+    // Đã qua giờ bắt đầu hôm nay mà chưa chấm công -> Quên chấm công
+    return 'missed';
   }
 
   /// Lấy màu sắc biểu thị trạng thái
@@ -431,7 +429,7 @@ class ScheduleService {
     return false;
   }
 
-  static double _calculateHours(String start, String end) {
+  static double? _calculateHours(String start, String end) {
     try {
       final sParts = start.split(':').map(int.parse).toList();
       final eParts = end.split(':').map(int.parse).toList();
@@ -440,7 +438,8 @@ class ScheduleService {
       final diff = eMin >= sMin ? eMin - sMin : (eMin + 24 * 60) - sMin;
       return double.parse((diff / 60.0).toStringAsFixed(1));
     } catch (_) {
-      return 5.0;
+      // Không parse được giờ thì trả null để UI hiện '—', không bịa số giờ.
+      return null;
     }
   }
 
@@ -488,24 +487,40 @@ class ScheduleService {
       final isToday = dayDate.year == today.year && dayDate.month == today.month && dayDate.day == today.day;
       final dateStr = '${dayDate.day.toString().padLeft(2, '0')}/${dayDate.month.toString().padLeft(2, '0')}';
 
-      final matchingShifts = apiShifts.where((s) => _matchesDate(s.date, dayDate)).toList();
+      final matchingShifts = apiShifts.where((s) {
+      if (!_matchesDate(s.date, dayDate)) return false;
+      if (user != null && s.employeeId != null && s.employeeId!.isNotEmpty) {
+        final matchesId = s.employeeId == user.id;
+        final matchesEmail = s.employeeId == user.email;
+        if (!matchesId && !matchesEmail) return false;
+      }
+      return true;
+    }).toList();
 
       List<ShiftDetail> shifts;
       if (matchingShifts.isNotEmpty) {
         shifts = matchingShifts.map((s) {
           final hours = _calculateHours(s.scheduledStart, s.scheduledEnd);
-          final isCheckedIn = activeCheckedInShift != null &&
-              (activeCheckedInShift.id == s.id || activeCheckedInShift.shiftName == s.template);
-          final isCheckedOut = completedShiftIds != null && completedShiftIds.contains(s.id);
-          final status = (s.status == 'hoàn thành' || s.status == 'completed')
-              ? 'completed'
-              : calculateShiftStatus(
-                  date: dayDate,
-                  startTime: s.scheduledStart,
-                  endTime: s.scheduledEnd,
-                  isCheckedIn: isCheckedIn,
-                  isCheckedOut: isCheckedOut,
-                );
+          final isCheckedIn = s.checkIn != null ||
+              (activeCheckedInShift != null &&
+                  (activeCheckedInShift.id == s.id || activeCheckedInShift.shiftName == s.template));
+          final isCheckedOut = s.checkOut != null ||
+              (completedShiftIds != null && completedShiftIds.contains(s.id));
+          // Ưu tiên trạng thái và giờ chấm công thật từ API thay vì suy diễn từ đồng hồ.
+          final String status;
+          if (s.status == 'hoàn thành' || s.status == 'completed' || isCheckedOut) {
+            status = 'completed';
+          } else if (s.status == 'missed' || s.status == 'absent') {
+            status = 'missed';
+          } else {
+            status = calculateShiftStatus(
+              date: dayDate,
+              startTime: s.scheduledStart,
+              endTime: s.scheduledEnd,
+              isCheckedIn: isCheckedIn,
+              isCheckedOut: isCheckedOut,
+            );
+          }
 
           return ShiftDetail(
             id: s.id,
@@ -513,8 +528,8 @@ class ScheduleService {
             startTime: s.scheduledStart,
             endTime: s.scheduledEnd,
             hours: hours,
-            branch: s.branchSlug ?? branchName ?? 'HN-1',
-            role: s.note ?? 'Nhân viên trực ca',
+            branch: s.branchSlug ?? branchName ?? '',
+            role: s.note ?? '',
             status: status,
           );
         }).toList();
@@ -543,19 +558,41 @@ class ScheduleService {
     }
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final matchingShifts = apiShifts.where((s) => _matchesDate(s.date, today)).toList();
+    final matchingShifts = apiShifts.where((s) {
+      if (!_matchesDate(s.date, today)) return false;
+      if (user != null && s.employeeId != null && s.employeeId!.isNotEmpty) {
+        final matchesId = s.employeeId == user.id;
+        final matchesEmail = s.employeeId == user.email;
+        if (!matchesId && !matchesEmail) return false;
+      }
+      return true;
+    }).toList();
     if (matchingShifts.isEmpty) return [];
     return matchingShifts.map((s) {
       final hours = _calculateHours(s.scheduledStart, s.scheduledEnd);
+      final String status;
+      if (s.status == 'hoàn thành' || s.status == 'completed' || s.checkOut != null) {
+        status = 'completed';
+      } else if (s.checkIn != null) {
+        status = 'active';
+      } else if (s.status == 'missed' || s.status == 'absent') {
+        status = 'missed';
+      } else {
+        status = calculateShiftStatus(
+          date: today,
+          startTime: s.scheduledStart,
+          endTime: s.scheduledEnd,
+        );
+      }
       return ShiftDetail(
         id: s.id,
         shiftName: s.template,
         startTime: s.scheduledStart,
         endTime: s.scheduledEnd,
         hours: hours,
-        branch: s.branchSlug ?? branchName ?? 'HN-1',
-        role: s.note ?? 'Nhân viên',
-        status: s.status,
+        branch: s.branchSlug ?? branchName ?? '',
+        role: s.note ?? '',
+        status: status,
       );
     }).toList();
   }

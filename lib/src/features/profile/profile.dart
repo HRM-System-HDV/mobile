@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/models/user.dart';
+import '../../core/utils/image_helper.dart';
+import 'employee_repository.dart';
 import 'info.dart';
 import '../auth/auth_repository.dart';
-import '../auth/login.dart';
 import 'notif_settings.dart';
 import 'security.dart';
 
@@ -15,12 +17,7 @@ class ProfileScreen extends StatefulWidget {
 
   const ProfileScreen({
     super.key,
-    this.currentUser = const UserModel(
-      name: 'Nguyễn Thu Hà',
-      email: 'nhanvien@company.com',
-      role: 'staff',
-      roleTitle: 'Nhân viên',
-    ),
+    required this.currentUser,
   });
 
   @override
@@ -28,30 +25,52 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  late final TextEditingController _nameController;
-  late final TextEditingController _phoneController;
+  String? _loadedUserId;
 
   @override
-  void initState() {
-    super.initState();
-    _nameController = TextEditingController(text: widget.currentUser.name);
-    _phoneController = TextEditingController(
-      text: widget.currentUser.phone.isNotEmpty ? widget.currentUser.phone : '—',
-    );
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final me = UserScope.currentUser(context) ?? widget.currentUser;
+    if (_loadedUserId != me.id && me.id.isNotEmpty) {
+      _loadedUserId = me.id;
+      _refreshProfile(me);
+    }
   }
 
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _phoneController.dispose();
-    super.dispose();
+  Future<void> _refreshProfile(UserModel current) async {
+    try {
+      final data = await EmployeeRepository().getEmployee(current.id);
+      if (data != null && mounted) {
+        final updated = current.copyWith(
+          avatarUrl: data['avatar']?.toString() ?? current.avatarUrl,
+          phone: data['phone']?.toString() ?? current.phone,
+          gender: data['gender']?.toString() ?? current.gender,
+          birthDate: data['birthDate']?.toString() ?? current.birthDate,
+          province: data['province']?.toString() ?? current.province,
+          ward: data['ward']?.toString() ?? current.ward,
+          street: data['street']?.toString() ?? current.street,
+          cccd: data['cccd']?.toString() ?? current.cccd,
+          issueDate: data['issueDate']?.toString() ?? current.issueDate,
+          issuePlace: data['issuePlace']?.toString() ?? current.issuePlace,
+          cccdFrontUrl: data['cccdFront']?.toString() ?? current.cccdFrontUrl,
+          cccdBackUrl: data['cccdBack']?.toString() ?? current.cccdBackUrl,
+          bankName: data['bankName']?.toString() ?? current.bankName,
+          bankAccountNumber: data['bankAccountNumber']?.toString() ?? current.bankAccountNumber,
+          bankAccountName: data['bankAccountName']?.toString() ?? current.bankAccountName,
+        );
+        UserScope.setUser(context, updated);
+      }
+    } catch (_) {}
   }
-
 
   @override
   Widget build(BuildContext context) {
-    final bool canManage = widget.currentUser.canManage;
-    final String roleBadge = widget.currentUser.roleTitle;
+    // Đọc từ UserScope để tên/SĐT/ảnh cập nhật ngay sau khi lưu hồ sơ.
+    final me = UserScope.currentUser(context) ?? widget.currentUser;
+    final bool canManage = me.canManage;
+    final String roleBadge = me.roleTitle;
+    final phone = me.phone.isNotEmpty ? me.phone : '—';
+    final avatarProvider = parseImageProvider(me.avatarUrl);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -70,11 +89,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
               context,
               MaterialPageRoute(
                 builder: (_) => PersonalInfoScreen(
-                  name: _nameController.text,
-                  email: widget.currentUser.email,
-                  phone: _phoneController.text,
+                  name: me.name,
+                  email: me.email,
+                  phone: phone,
                   isManager: canManage,
-                  user: widget.currentUser,
+                  user: me,
                 ),
               ),
             ),
@@ -91,14 +110,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   CircleAvatar(
                     radius: 26,
                     backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-                    child: FaIcon(canManage ? FontAwesomeIcons.userShield : FontAwesomeIcons.person, size: 28, color: AppColors.primary),
+                    backgroundImage: avatarProvider,
+                    child: avatarProvider == null
+                        ? FaIcon(canManage ? FontAwesomeIcons.userShield : FontAwesomeIcons.person, size: 28, color: AppColors.primary)
+                        : null,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(_nameController.text, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                      Text(me.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
                       const SizedBox(height: 2),
-                      Text('$roleBadge • ${widget.currentUser.email}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                      Text('$roleBadge • ${me.email}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                       const SizedBox(height: 4),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -140,9 +162,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       await AuthRepository().logout();
                       if (!context.mounted) return;
                       UserScope.setUser(context, null);
-                      Navigator.of(context).pushReplacement(
-                        MaterialPageRoute(builder: (context) => const LoginScreen()),
-                      );
+                      context.go('/login');
                     },
                     child: const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),

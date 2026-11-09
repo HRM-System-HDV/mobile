@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
 import '../../core/models/branch.dart';
 import '../../core/models/user.dart';
+import '../../core/network/api_client.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import 'auth_repository.dart';
@@ -24,6 +25,7 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _resolveSession() async {
+    await ApiClient.restoreSession();
     final results = await Future.wait([
       AuthRepository().me(),
       Future.delayed(const Duration(milliseconds: 1200)),
@@ -31,7 +33,11 @@ class _SplashScreenState extends State<SplashScreen> {
     if (!mounted) return;
     final session = results[0];
     if (session is UserModel) {
-      BranchScope.select(context, branchById(session.assignedBranchId ?? 'hn-1'));
+      if (session.assignedBranchId != null && session.assignedBranchId!.isNotEmpty) {
+        BranchScope.select(context, branchById(session.assignedBranchId!));
+      } else {
+        BranchScope.select(context, null);
+      }
       UserScope.setUser(context, session);
       context.go('/main', extra: session);
     } else {

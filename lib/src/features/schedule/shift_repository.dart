@@ -10,6 +10,9 @@ class ApiShiftModel {
   final String scheduledEnd;
   final String status;
   final String? note;
+  final String? checkIn;
+  final String? checkOut;
+  final bool isRecurring;
 
   const ApiShiftModel({
     required this.id,
@@ -21,6 +24,9 @@ class ApiShiftModel {
     required this.scheduledEnd,
     this.status = 'scheduled',
     this.note,
+    this.checkIn,
+    this.checkOut,
+    this.isRecurring = false,
   });
 
   factory ApiShiftModel.fromJson(Map<String, dynamic> j) => ApiShiftModel(
@@ -28,12 +34,21 @@ class ApiShiftModel {
         employeeId: j['employeeId']?.toString(),
         branchSlug: j['branchSlug']?.toString(),
         date: j['date']?.toString() ?? '',
-        template: j['template']?.toString() ?? 'Ca làm việc',
-        scheduledStart: j['scheduledStart']?.toString() ?? '08:00',
-        scheduledEnd: j['scheduledEnd']?.toString() ?? '17:00',
+        // Cột này nullable trong DB; không điền giờ giả để tránh tính sai công/lương.
+        template: j['template']?.toString() ?? '',
+        scheduledStart: j['scheduledStart']?.toString() ?? '',
+        scheduledEnd: j['scheduledEnd']?.toString() ?? '',
         status: j['status']?.toString() ?? 'scheduled',
         note: j['note']?.toString(),
+        checkIn: j['checkIn']?.toString(),
+        checkOut: j['checkOut']?.toString(),
+        isRecurring: j['isRecurring'] == true,
       );
+
+  String get timeLabel =>
+      (scheduledStart.isEmpty || scheduledEnd.isEmpty) ? '—' : '$scheduledStart - $scheduledEnd';
+
+  String get displayTemplate => template.isEmpty ? '—' : template;
 
   Map<String, dynamic> toJson() => {
         if (employeeId != null) 'employeeId': employeeId,
@@ -92,38 +107,63 @@ class ShiftRepository {
     required String employeeId,
     required String shiftId,
     String? preference,
+    String? branchSlug,
   }) async {
     await api.postJson('/api/shifts/register', {
       'employeeId': employeeId,
       'shiftId': shiftId,
+      if (branchSlug != null && branchSlug.isNotEmpty) 'branchSlug': branchSlug,
       if (preference != null) 'preference': preference,
+      if (preference != null) 'week': preference,
+      if (preference != null) 'day': preference,
+      if (preference != null) 'wish': preference,
     });
   }
 
-  Future<List<Map<String, dynamic>>> getRegistrations({String? employeeId}) async {
+  Future<void> unregisterShift({
+    required String employeeId,
+    required String shiftId,
+    String? preference,
+  }) async {
+    await api.postJson('/api/shifts/unregister', {
+      'employeeId': employeeId,
+      'shiftId': shiftId,
+      if (preference != null) 'preference': preference,
+      if (preference != null) 'week': preference,
+      if (preference != null) 'day': preference,
+      if (preference != null) 'wish': preference,
+    });
+  }
+
+  Future<void> deleteRegistration(String id) async {
+    await api.delete('/api/shifts/registrations/$id');
+  }
+
+  Future<List<Map<String, dynamic>>> getRegistrations({String? employeeId, String? branchSlug}) async {
     final query = <String, String>{};
-    if (employeeId != null) query['employeeId'] = employeeId;
+    if (employeeId != null && employeeId.isNotEmpty) query['employeeId'] = employeeId;
+    if (branchSlug != null && branchSlug.isNotEmpty) query['branchSlug'] = branchSlug;
     final data = await api.getJson('/api/shifts/registrations', query: query);
     final List list = data is List ? data : [];
     return list.whereType<Map<String, dynamic>>().toList();
   }
 
   Future<List<Map<String, dynamic>>> getTemplates() async {
-    final data = await api.getJson('/api/shifts/templates');
+    final data = await api.getJson('/api/shift-templates');
     final List list = data is List ? data : [];
     return list.whereType<Map<String, dynamic>>().toList();
   }
 
   Future<Map<String, dynamic>> createTemplate(Map<String, dynamic> payload) async {
-    final res = await api.postJson('/api/shifts/templates', payload);
+    final res = await api.postJson('/api/shift-templates', payload);
     return res is Map<String, dynamic> ? res : {};
   }
 
   Future<void> updateTemplate(String id, Map<String, dynamic> payload) async {
-    await api.putJson('/api/shifts/templates/$id', payload);
+    await api.putJson('/api/shift-templates/$id', payload);
   }
 
   Future<void> deleteTemplate(String id) async {
-    await api.delete('/api/shifts/templates/$id');
+    await api.delete('/api/shift-templates/$id');
   }
 }

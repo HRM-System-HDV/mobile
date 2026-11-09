@@ -27,7 +27,7 @@ class TaskModel {
   final String assignedByName; // Tên quản lý hoặc người giao
   final String? shiftName;     // Ca gắn liền (nếu có)
   final String branch;
-  final DateTime dueDate;
+  final DateTime? dueDate;
   TaskStatus status;
   final TaskPriority priority;
   final String? assignedToEmail;
@@ -44,7 +44,7 @@ class TaskModel {
     required this.assignedByName,
     this.shiftName,
     required this.branch,
-    required this.dueDate,
+    this.dueDate,
     this.status = TaskStatus.pending,
     this.priority = TaskPriority.normal,
     this.assignedToEmail,
@@ -56,7 +56,9 @@ class TaskModel {
 
   bool get isOverdue {
     if (status == TaskStatus.completed) return false;
-    return DateTime.now().isAfter(dueDate);
+    final due = dueDate;
+    if (due == null) return false;
+    return DateTime.now().isAfter(due);
   }
 
   TaskStatus get computedStatus {

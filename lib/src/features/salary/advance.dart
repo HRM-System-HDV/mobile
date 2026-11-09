@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
+import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../leave_request/leave_repository.dart';
 import 'salary_repository.dart';
@@ -32,17 +34,31 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
   final LeaveRepository _leaveRepo = LeaveRepository();
   final SalaryRepository _salaryRepo = SalaryRepository();
   double? _estimatedSalary;
+  String? _lastUserId;
+  String? _loadError;
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(backgroundColor: AppColors.error, content: Text('❌ $message')),
+    );
+  }
 
   @override
-  void initState() {
-    super.initState();
-    _fetchAdvances();
-    _fetchSalary();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final uid = UserScope.currentUser(context)?.id;
+    if (_lastUserId != uid) {
+      _lastUserId = uid;
+      _fetchAdvances();
+      _fetchSalary();
+    }
   }
 
   Future<void> _fetchSalary() async {
+    final uid = UserScope.currentUser(context)?.id;
     try {
-      final payslips = await _salaryRepo.getPayslips();
+      final payslips = await _salaryRepo.getPayslips(employeeId: uid);
       if (mounted) {
         setState(() {
           if (payslips.isEmpty) {
@@ -74,15 +90,16 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
   }
 
   Future<void> _fetchAdvances() async {
+    final uid = UserScope.currentUser(context)?.id;
     try {
-      final list = await _leaveRepo.getRequests();
+      final list = await _leaveRepo.getRequests(employeeId: uid);
       if (mounted) {
         final apiRecords = list.where((m) => m.type == 'advance').map((m) {
           final amt = m.title.replaceFirst('Tạm ứng lương: ', '');
           return AdvanceRecord(
             id: m.id,
-            amount: amt.isNotEmpty ? amt : '1.000.000 đ',
-            date: m.createdAt ?? 'Vừa xong',
+            amount: amt.isNotEmpty ? amt : '—',
+            date: m.createdAt ?? '—',
             reason: m.content,
             status: m.status,
           );
@@ -90,10 +107,15 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
 
         setState(() {
           _records = apiRecords;
+          _loadError = null;
         });
       }
-    } catch (_) {
-      // API lỗi thì giữ nguyên danh sách hiện tại (rỗng) để hiện empty state.
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loadError = e is ApiException ? e.message : 'Không tải được danh sách tạm ứng';
+        });
+      }
     }
   }
 
@@ -165,7 +187,11 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
                 }
                 final user = UserScope.currentUser(context);
                 final empId = user?.id ?? '';
-                if (empId.isEmpty) return;
+                if (empId.isEmpty) {
+                  _showError('Không xác định được nhân sự đang đăng nhập');
+                  return;
+                }
+                final branchSlug = BranchScope.selectedBranch(context)?.slug ?? user?.branchSlug ?? '';
 
                 try {
                   await _leaveRepo.createRequest({
@@ -173,6 +199,7 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
                     'title': 'Tạm ứng lương: $amount đ',
                     'content': reason,
                     'employeeId': empId,
+                    if (branchSlug.isNotEmpty) 'branchSlug': branchSlug,
                   });
                   if (modalCtx.mounted) {
                     Navigator.pop(modalCtx);
@@ -186,13 +213,7 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
                   );
                   _fetchAdvances();
                 } catch (e) {
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      backgroundColor: AppColors.error,
-                      content: Text('❌ Gửi yêu cầu tạm ứng thất bại: $e'),
-                    ),
-                  );
+                  _showError('Gửi yêu cầu tạm ứng thất bại: ${e is ApiException ? e.message : e}');
                 }
               },
               style: ElevatedButton.styleFrom(
@@ -287,11 +308,29 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
             Container(
               padding: const EdgeInsets.symmetric(vertical: 36),
               alignment: Alignment.center,
-              child: const Column(
+              child: Column(
                 children: [
-                  FaIcon(FontAwesomeIcons.handHoldingDollar, size: 36, color: Colors.grey),
-                  SizedBox(height: 10),
-                  Text('Chưa có yêu cầu tạm ứng nào', style: TextStyle(color: AppColors.textSecondary, fontSize: 13.5)),
+                  FaIcon(
+                    _loadError != null ? FontAwesomeIcons.cloudBolt : FontAwesomeIcons.handHoldingDollar,
+                    size: 36,
+                    color: _loadError != null ? AppColors.error : Colors.grey,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _loadError ?? 'Chưa có yêu cầu tạm ứng nào',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: _loadError != null ? AppColors.error : AppColors.textSecondary,
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  if (_loadError != null) ...[
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Kéo xuống để thử lại.',
+                      style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                    ),
+                  ],
                 ],
               ),
             )

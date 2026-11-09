@@ -13,6 +13,12 @@ class ApiTaskModel {
   final String? createdAt;
   final String? proofUrl;
   final bool requirePhoto;
+  final String? sourceType;
+  final String? assignedByName;
+  final String? shiftName;
+  final String? assignedToEmail;
+  final String? assignedToName;
+  final String? completedAt;
 
   const ApiTaskModel({
     required this.id,
@@ -26,6 +32,12 @@ class ApiTaskModel {
     this.createdAt,
     this.proofUrl,
     this.requirePhoto = false,
+    this.sourceType,
+    this.assignedByName,
+    this.shiftName,
+    this.assignedToEmail,
+    this.assignedToName,
+    this.completedAt,
   });
 
   factory ApiTaskModel.fromJson(Map<String, dynamic> j) => ApiTaskModel(
@@ -36,18 +48,27 @@ class ApiTaskModel {
         status: j['status']?.toString(),
         priority: j['priority']?.toString(),
         dueDate: j['dueDate']?.toString(),
-        assigneeId: j['assigneeId']?.toString(),
+        assigneeId: j['assigneeId']?.toString() ?? j['assignedTo']?.toString(),
         createdAt: j['createdAt']?.toString(),
         proofUrl: j['proofUrl']?.toString() ?? j['proofPhotoUrl']?.toString(),
         requirePhoto: j['requirePhoto'] == true,
+        sourceType: j['sourceType']?.toString(),
+        assignedByName: j['assignedByName']?.toString(),
+        shiftName: j['shiftName']?.toString(),
+        assignedToEmail: j['assignedToEmail']?.toString(),
+        assignedToName: j['assignedToName']?.toString(),
+        completedAt: j['completedAt']?.toString(),
       );
 
   TaskModel toTaskModel() {
-    final now = DateTime.now();
-    DateTime parsedDueDate = now.add(const Duration(hours: 4));
+    DateTime? parsedDueDate;
     if (dueDate != null) {
-      final parsed = DateTime.tryParse(dueDate!);
-      if (parsed != null) parsedDueDate = parsed;
+      parsedDueDate = DateTime.tryParse(dueDate!);
+      if (parsedDueDate == null) {
+        // Hỗ trợ format YYYY-MM-DD HH:mm
+        final cleaned = dueDate!.replaceFirst(' ', 'T');
+        parsedDueDate = DateTime.tryParse(cleaned);
+      }
     }
 
     TaskPriority pri = TaskPriority.normal;
@@ -58,23 +79,33 @@ class ApiTaskModel {
     }
 
     TaskStatus st = TaskStatus.pending;
-    if (status == 'completed' || status == 'đã xong') {
+    if (status == 'completed' || status == 'done' || status == 'đã xong') {
       st = TaskStatus.completed;
-    } else if (status == 'in_progress' || status == 'đang làm') {
+    } else if (status == 'in_progress' || status == 'inProgress' || status == 'đang làm') {
       st = TaskStatus.inProgress;
+    }
+
+    final isShift = sourceType == 'shift' || (shiftName != null && shiftName!.isNotEmpty);
+
+    DateTime? parsedCompletedAt;
+    if (completedAt != null) {
+      parsedCompletedAt = DateTime.tryParse(completedAt!);
     }
 
     return TaskModel(
       id: id,
       title: title,
       description: description ?? '',
-      sourceType: TaskSourceType.manager,
-      assignedByName: 'Quản lý chi nhánh',
-      branch: branchSlug ?? 'HN-1',
+      sourceType: isShift ? TaskSourceType.shift : TaskSourceType.manager,
+      assignedByName: assignedByName ?? '—',
+      shiftName: shiftName,
+      branch: branchSlug ?? '',
       dueDate: parsedDueDate,
       status: st,
       priority: pri,
-      assignedToName: assigneeId != null ? 'Nhân viên #$assigneeId' : 'Bạn',
+      assignedToEmail: assignedToEmail,
+      assignedToName: assignedToName ?? '—',
+      completedAt: parsedCompletedAt,
       requirePhoto: requirePhoto,
       proofPhotoUrl: proofUrl,
     );
@@ -86,10 +117,11 @@ class TaskRepository {
   final ApiClient api;
   TaskRepository({ApiClient? api}) : api = api ?? ApiClient();
 
-  Future<List<TaskModel>> getTasks({String? branchSlug, String? status}) async {
+  Future<List<TaskModel>> getTasks({String? branchSlug, String? status, String? assigneeId}) async {
     final query = <String, String>{};
     if (branchSlug != null && branchSlug.isNotEmpty) query['branchSlug'] = branchSlug;
     if (status != null && status.isNotEmpty) query['status'] = status;
+    if (assigneeId != null && assigneeId.isNotEmpty) query['assignedTo'] = assigneeId;
 
     final data = await api.getJson('/api/tasks', query: query);
     final List list = data is List ? data : [];
@@ -108,6 +140,12 @@ class TaskRepository {
     String priority = 'normal',
     String? dueDate,
     String? assigneeId,
+    String? sourceType,
+    String? assignedByName,
+    String? shiftName,
+    String? assignedToEmail,
+    String? assignedToName,
+    bool requirePhoto = false,
   }) async {
     await api.postJson('/api/tasks', {
       'title': title,
@@ -116,14 +154,24 @@ class TaskRepository {
       'status': status,
       'priority': priority,
       if (dueDate != null) 'dueDate': dueDate,
-      if (assigneeId != null) 'assigneeId': assigneeId,
+      if (assigneeId != null) 'assignedTo': assigneeId,
+      if (sourceType != null) 'sourceType': sourceType,
+      if (assignedByName != null) 'assignedByName': assignedByName,
+      if (shiftName != null) 'shiftName': shiftName,
+      if (assignedToEmail != null) 'assignedToEmail': assignedToEmail,
+      if (assignedToName != null) 'assignedToName': assignedToName,
+      'requirePhoto': requirePhoto,
     });
   }
 
-  Future<void> updateTaskStatus(String id, String status, {String? proofUrl}) async {
+  Future<void> updateTaskStatus(String id, String status, {String? proofUrl, String? photoSubmittedBy}) async {
+    final nowIso = DateTime.now().toIso8601String();
     await api.putJson('/api/tasks/$id', {
       'status': status,
-      if (proofUrl != null) 'proofUrl': proofUrl,
+      if (proofUrl != null) 'proofPhotoUrl': proofUrl,
+      if (photoSubmittedBy != null) 'photoSubmittedBy': photoSubmittedBy,
+      if (proofUrl != null) 'photoSubmittedAt': nowIso,
+      if (status == 'completed' || status == 'done') 'completedAt': nowIso,
     });
   }
 

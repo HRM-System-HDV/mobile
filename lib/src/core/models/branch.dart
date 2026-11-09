@@ -1,8 +1,8 @@
 /// Chi nhánh doanh nghiệp trong hệ thống HRM On-Premises.
 class Branch {
   final String id;
-  final String slug; // khớp branchSlug trên Web Portal (VD: hn-1)
-  final String code; // mã rút gọn (VD: HN-1)
+  final String slug; // khớp branchSlug trên Web Portal (VD: CN01)
+  final String code; // mã rút gọn (VD: CN01)
   final String name;
   final String address;
 
@@ -13,40 +13,58 @@ class Branch {
     required this.name,
     required this.address,
   });
+
+  factory Branch.fromJson(Map<String, dynamic> json) {
+    final slug = json['slug']?.toString() ?? json['id']?.toString() ?? '';
+    final code = json['code']?.toString() ?? slug.toUpperCase();
+    final name = json['name']?.toString() ?? (code.isNotEmpty ? 'Chi nhánh $code' : 'Chi nhánh');
+    return Branch(
+      id: json['id']?.toString() ?? slug,
+      slug: slug,
+      code: code,
+      name: name,
+      address: json['address']?.toString() ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'slug': slug,
+    'code': code,
+    'name': name,
+    'address': address,
+  };
 }
 
-/// Danh sách chi nhánh chuẩn hóa cho hệ thống HRM nội bộ.
-const List<Branch> kBranches = [
-  Branch(
-    id: '01',
-    slug: 'hn-1',
-    code: 'HN-1',
-    name: 'Chi nhánh Hoàn Kiếm',
-    address: '12 Tràng Thi, Hoàn Kiếm, Hà Nội',
-  ),
-  Branch(
-    id: '02',
-    slug: 'hn-2',
-    code: 'HN-2',
-    name: 'Chi nhánh Cầu Giấy',
-    address: '88 Cầu Giấy, Q. Cầu Giấy, Hà Nội',
-  ),
-  Branch(
-    id: '03',
-    slug: 'dn-1',
-    code: 'DN-1',
-    name: 'Chi nhánh Đà Nẵng',
-    address: '120 Nguyễn Văn Linh, Q. Hải Châu, Đà Nẵng',
-  ),
-];
+/// Cache danh sách chi nhánh được tải từ API / DB thật
+List<Branch> _cachedBranches = [];
 
-/// Lấy danh sách chi nhánh công ty
-List<Branch> get branches => kBranches;
+/// Cập nhật cache chi nhánh thật
+void updateBranchCache(List<Branch> branches) {
+  _cachedBranches = List.unmodifiable(branches);
+}
 
-/// Lấy branch theo id hoặc slug (mặc định là chi nhánh Hoàn Kiếm).
-Branch branchById(String id) {
-  return kBranches.firstWhere(
-    (b) => b.id == id || b.slug == id,
-    orElse: () => kBranches.first,
+/// Lấy danh sách chi nhánh đã tải từ server
+List<Branch> get branches => _cachedBranches;
+
+/// Lấy branch theo id hoặc slug từ cache hoặc khởi tạo branch tạm thời khớp với slug/id
+Branch branchById(String idOrSlug) {
+  final query = idOrSlug.trim();
+  final lower = query.toLowerCase();
+
+  for (final b in _cachedBranches) {
+    if (b.id == query || b.slug.toLowerCase() == lower || b.code.toLowerCase() == lower) {
+      return b;
+    }
+  }
+
+  // Nếu chưa có trong cache, tạo Branch động với slug/id đó thay vì mock dữ liệu giả
+  final code = query.toUpperCase();
+  return Branch(
+    id: query,
+    slug: query,
+    code: code,
+    name: code.isNotEmpty ? 'Chi nhánh $code' : 'Chi nhánh',
+    address: '',
   );
 }

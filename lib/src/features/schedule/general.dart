@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/widgets/branch_selector.dart';
 import '../../core/widgets/week_strip.dart';
+import '../attendance/attendance_repository.dart';
 import 'shift_repository.dart';
 import '../profile/employee_repository.dart';
 import 'staff_detail.dart';
@@ -15,6 +18,7 @@ class StaffInShift {
   final String avatarUrl;
   final String checkInStatus; // 'checked_in', 'in_progress', 'not_yet'
   final String checkInTime;
+  final String checkOutTime;
   final String phone;
 
   const StaffInShift({
@@ -24,6 +28,7 @@ class StaffInShift {
     this.avatarUrl = '',
     required this.checkInStatus,
     required this.checkInTime,
+    this.checkOutTime = '',
     required this.phone,
   });
 }
@@ -45,7 +50,8 @@ class GeneralShiftModel {
     required this.staffList,
   });
 
-  String get timeRange => '$startTime - $endTime';
+  String get timeRange =>
+      (startTime.isEmpty || endTime.isEmpty) ? '—' : '$startTime - $endTime';
   int get staffCount => staffList.length;
 }
 
@@ -73,9 +79,13 @@ class GeneralScheduleScreen extends StatefulWidget {
 class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
   final ShiftRepository _shiftRepo = ShiftRepository();
   final EmployeeRepository _empRepo = EmployeeRepository();
+  final AttendanceRepository _attRepo = AttendanceRepository();
   List<ApiShiftModel> _apiShifts = [];
   List<Map<String, dynamic>> _apiEmployees = [];
+  List<Map<String, dynamic>> _apiTemplates = [];
+  int _gracePeriodMinutes = 5;
   String? _loadedBranchSlug;
+  String? _loadError;
 
   // Offset tuần so với tuần hiện tại (0: Tuần này, -1: Tuần trước, 1: Tuần sau, -2, 2, ...)
   int _weekOffset = 0;
@@ -89,7 +99,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
   DateTime get _thisWeekMonday => _getMonday(_today);
 
   // Set các ID ca đang được mở rộng xổ xuống
-  final Set<String> _expandedShiftIds = {'shift_1', 'shift_2'};
+  final Set<String> _expandedShiftIds = {'shift_0', 'shift_1', 'shift_2'};
 
   @override
   void initState() {
@@ -108,24 +118,29 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
   }
 
   Future<void> _loadGeneralData() async {
+    final branch = BranchScope.read(context)?.notifier?.value;
     try {
-      final branch = BranchScope.selectedBranch(context);
-      final emps = await _empRepo.getEmployees();
-      final shifts = await _shiftRepo.getShifts(branchSlug: branch?.slug);
-      if (mounted) {
-        setState(() {
-          _apiEmployees = emps;
-          _apiShifts = shifts;
-        });
-      }
-    } catch (_) {
-      // Chỉ dùng API thật: khi lỗi/offline giữ danh sách rỗng để hiện empty-state.
-      if (mounted) {
-        setState(() {
-          _apiEmployees = [];
-          _apiShifts = [];
-        });
-      }
+      final results = await Future.wait([
+        _empRepo.getEmployees(),
+        _shiftRepo.getShifts(branchSlug: branch?.slug),
+        _shiftRepo.getTemplates(),
+        _attRepo.getConfig(),
+      ]);
+      if (!mounted) return;
+      final cfg = results[3] as Map<String, dynamic>;
+      final grace = cfg['gracePeriodMinutes'];
+      setState(() {
+        _apiEmployees = (results[0] as List).cast<Map<String, dynamic>>();
+        _apiShifts = (results[1] as List).cast<ApiShiftModel>();
+        _apiTemplates = (results[2] as List).cast<Map<String, dynamic>>();
+        if (grace is int) _gracePeriodMinutes = grace;
+        _loadError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      // Giữ dữ liệu lần trước và báo lỗi, không âm thầm hiện lịch trống.
+      setState(() => _loadError =
+          e is ApiException ? e.message : 'Không tải được lịch làm việc');
     }
   }
 
@@ -164,12 +179,53 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
     return '$monStr - $sunStr';
   }
 
+  String _calcShiftStatus(DateTime dayDate, String startTime, String endTime) {
+    final today = DateTime(_today.year, _today.month, _today.day);
+    final target = DateTime(dayDate.year, dayDate.month, dayDate.day);
+    if (target.isBefore(today)) return 'completed';
+    if (target.isAfter(today)) return 'upcoming';
+
+    if (startTime.isEmpty || endTime.isEmpty) return 'upcoming';
+
+    int toMinutes(String timeStr) {
+      final parts = (timeStr.isEmpty ? '00:00' : timeStr).split(':');
+      final h = int.tryParse(parts[0]) ?? 0;
+      final m = parts.length > 1 ? (int.tryParse(parts[1]) ?? 0) : 0;
+      return h * 60 + m;
+    }
+
+    final now = DateTime.now();
+    final nowMinutes = now.hour * 60 + now.minute;
+    final startMin = toMinutes(startTime);
+    var endMin = toMinutes(endTime);
+    if (endMin <= startMin) endMin += 1440;
+
+    if (nowMinutes >= endMin) return 'completed';
+    if (nowMinutes < startMin) return 'upcoming';
+    return 'in_progress';
+  }
+
+  bool _matchesShiftTemplate(String val, String templateName, String templateId) {
+    if (val.isEmpty || val == 'Nghỉ' || val == 'off') return false;
+    final cleanVal = val.trim().toLowerCase();
+    final cleanTName = templateName.trim().toLowerCase();
+    final cleanTId = templateId.trim().toLowerCase();
+
+    if (cleanVal == 't1' || cleanVal == 'st-1') return cleanTName.contains('sáng');
+    if (cleanVal == 't2' || cleanVal == 'st-2') return cleanTName.contains('chiều');
+    if (cleanVal == 't3' || cleanVal == 'st-3') return cleanTName.contains('tối');
+    if (cleanVal == 't4' || cleanVal == 'st-4') return cleanTName.contains('hành chính');
+
+    return cleanVal == cleanTName ||
+        cleanVal == cleanTId ||
+        cleanVal.contains(cleanTName) ||
+        cleanTName.contains(cleanVal);
+  }
+
   List<GeneralDayModel> _getGeneralWeekData(int offset) {
     final monday = _thisWeekMonday.add(Duration(days: offset * 7));
     final List<String> dayShortNames = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
 
-    // Chỉ dùng API thật. Khi API rỗng thì trả về tuần rỗng
-    // (danh sách ca rỗng cho 7 ngày, UI đã có empty-state 'Không có ca làm việc nào').
     return List.generate(7, (i) {
       final dayDate = monday.add(Duration(days: i));
       final isToday = dayDate.year == _today.year && dayDate.month == _today.month && dayDate.day == _today.day;
@@ -177,43 +233,92 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
       final dateStr = '${dayDate.day.toString().padLeft(2, '0')}/${dayDate.month.toString().padLeft(2, '0')}';
 
       final shiftsForDay = _apiShifts.where((s) => _matchesDate(s.date, dayDate)).toList();
-      final Map<String, List<ApiShiftModel>> grouped = {};
-      for (final s in shiftsForDay) {
-        final key = '${s.scheduledStart}-${s.scheduledEnd}-${s.template}';
-        grouped.putIfAbsent(key, () => []).add(s);
-      }
-
       final dayShifts = <GeneralShiftModel>[];
-      for (final entry in grouped.entries) {
-        final first = entry.value.first;
-        final staffList = <StaffInShift>[];
-        for (final s in entry.value) {
-          if (s.employeeId != null && s.employeeId!.isNotEmpty) {
-            final emp = _apiEmployees.firstWhere(
-              (e) => (e['id']?.toString() == s.employeeId || e['email']?.toString() == s.employeeId || e['employeeCode']?.toString() == s.employeeId),
-              orElse: () => <String, dynamic>{'name': s.employeeId, 'role': 'Nhân viên'},
-            );
-            final name = emp['name']?.toString() ?? 'Nhân viên';
-            final role = emp['role']?.toString() ?? (emp['position']?.toString() ?? 'Nhân viên');
-            final phone = emp['phone']?.toString() ?? '—';
-            staffList.add(StaffInShift(
-              id: emp['id']?.toString() ?? (s.employeeId ?? ''),
-              name: name,
-              role: role,
-              checkInStatus: isPast || isToday ? 'checked_in' : 'not_yet',
-              checkInTime: first.scheduledStart,
-              phone: phone,
-            ));
+
+      // Dựng danh sách ca theo 3 khung ca mẫu chuẩn từ Backend (Ca Sáng, Ca Chiều, Ca Tối)
+      // giống hệt như trên Web ScheduleOverview
+      if (_apiTemplates.isNotEmpty) {
+        for (int ti = 0; ti < _apiTemplates.length; ti++) {
+          final t = _apiTemplates[ti];
+          final tId = t['id']?.toString() ?? 't_$ti';
+          final tName = t['name']?.toString() ?? 'Ca làm việc';
+          final tStart = t['startTime']?.toString() ?? '';
+          final tEnd = t['endTime']?.toString() ?? '';
+
+          final staffList = <StaffInShift>[];
+          final addedEmpIds = <String>{};
+
+          for (final s in shiftsForDay) {
+            final shiftTName = s.template;
+            if (_matchesShiftTemplate(shiftTName, tName, tId)) {
+              final empId = s.employeeId ?? '';
+              if (empId.isNotEmpty && !addedEmpIds.contains(empId)) {
+                addedEmpIds.add(empId);
+                final emp = _apiEmployees.firstWhere(
+                  (e) => (e['id']?.toString() == empId || e['email']?.toString() == empId || e['employeeCode']?.toString() == empId),
+                  orElse: () => <String, dynamic>{'name': empId, 'role': 'Nhân viên'},
+                );
+                final hasCheckedIn = s.checkIn != null && s.checkIn!.isNotEmpty && s.checkIn != '—';
+                staffList.add(StaffInShift(
+                  id: emp['id']?.toString() ?? empId,
+                  name: emp['name']?.toString() ?? 'Nhân viên',
+                  role: emp['role']?.toString() ?? (emp['position']?.toString() ?? 'Nhân viên'),
+                  checkInStatus: hasCheckedIn ? 'checked_in' : 'not_yet',
+                  // Chưa chấm công thì không mượn giờ bắt đầu ca làm giờ chấm công.
+                  checkInTime: hasCheckedIn ? s.checkIn! : '',
+                  checkOutTime: (s.checkOut != null && s.checkOut!.isNotEmpty && s.checkOut != '—') ? s.checkOut! : '',
+                  phone: emp['phone']?.toString() ?? '—',
+                ));
+              }
+            }
           }
+
+          dayShifts.add(GeneralShiftModel(
+            id: tId,
+            shiftName: tName,
+            startTime: tStart,
+            endTime: tEnd,
+            status: _calcShiftStatus(dayDate, tStart, tEnd),
+            staffList: staffList,
+          ));
         }
-        dayShifts.add(GeneralShiftModel(
-          id: first.id,
-          shiftName: first.template,
-          startTime: first.scheduledStart,
-          endTime: first.scheduledEnd,
-          status: isPast ? 'completed' : (isToday ? 'in_progress' : 'upcoming'),
-          staffList: staffList,
-        ));
+      } else {
+        // Fallback nếu API templates chưa về
+        final Map<String, List<ApiShiftModel>> grouped = {};
+        for (final s in shiftsForDay) {
+          final key = '${s.scheduledStart}-${s.scheduledEnd}-${s.template}';
+          grouped.putIfAbsent(key, () => []).add(s);
+        }
+        for (final entry in grouped.entries) {
+          final first = entry.value.first;
+          final staffList = <StaffInShift>[];
+          for (final s in entry.value) {
+            if (s.employeeId != null && s.employeeId!.isNotEmpty) {
+              final emp = _apiEmployees.firstWhere(
+                (e) => (e['id']?.toString() == s.employeeId || e['email']?.toString() == s.employeeId || e['employeeCode']?.toString() == s.employeeId),
+                orElse: () => <String, dynamic>{'name': s.employeeId, 'role': 'Nhân viên'},
+              );
+              final hasCheckedIn = s.checkIn != null && s.checkIn!.isNotEmpty && s.checkIn != '—';
+              staffList.add(StaffInShift(
+                id: emp['id']?.toString() ?? (s.employeeId ?? ''),
+                name: emp['name']?.toString() ?? 'Nhân viên',
+                role: emp['role']?.toString() ?? (emp['position']?.toString() ?? 'Nhân viên'),
+                checkInStatus: hasCheckedIn ? 'checked_in' : 'not_yet',
+                checkInTime: hasCheckedIn ? s.checkIn! : '',
+                checkOutTime: (s.checkOut != null && s.checkOut!.isNotEmpty && s.checkOut != '—') ? s.checkOut! : '',
+                phone: emp['phone']?.toString() ?? '—',
+              ));
+            }
+          }
+          dayShifts.add(GeneralShiftModel(
+            id: first.id,
+            shiftName: first.template,
+            startTime: first.scheduledStart,
+            endTime: first.scheduledEnd,
+            status: isPast ? 'completed' : (isToday ? 'in_progress' : 'upcoming'),
+            staffList: staffList,
+          ));
+        }
       }
 
       return GeneralDayModel(
@@ -284,6 +389,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
               });
             },
           ),
+          const BranchSelector(includeAll: true),
         ],
       ),
       body: Column(
@@ -315,6 +421,28 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(16.0),
                 children: [
+                if (_loadError != null)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.error.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.error.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        const FaIcon(FontAwesomeIcons.triangleExclamation, size: 16, color: AppColors.error),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            _loadError!,
+                            style: const TextStyle(fontSize: 12.5, color: AppColors.error),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -400,7 +528,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
     if (shift.status == 'completed') {
       statusColor = AppColors.success;
       statusText = 'Đã hoàn thành';
-    } else if (shift.status == 'active') {
+    } else if (shift.status == 'active' || shift.status == 'in_progress') {
       statusColor = Colors.blue;
       statusText = 'Đang diễn ra';
     } else {
@@ -434,6 +562,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
         children: [
           // Header Ca làm (Clickable để xổ xuống danh sách nhân viên)
           InkWell(
+            borderRadius: BorderRadius.circular(16),
             onTap: () => _toggleShiftExpand(shift.id),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -568,7 +697,30 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
   }
 
   Widget _buildStaffItemTile(StaffInShift staff, GeneralShiftModel shift, GeneralDayModel day) {
-    final isForgot = staff.checkInStatus == 'not_yet' && !day.isToday;
+    // Quên chấm công: Chưa chấm công mà ngày đã qua, HOẶC hôm nay đã qua giờ bắt đầu ca
+    final isForgot = staff.checkInStatus == 'not_yet' && (() {
+      if (shift.status == 'completed') return true;
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final dateParts = day.date.split('/');
+      final dayD = int.tryParse(dateParts[0]) ?? 1;
+      final monthD = dateParts.length > 1 ? (int.tryParse(dateParts[1]) ?? 1) : 1;
+      final yearD = now.year;
+      final dayDate = DateTime(yearD, monthD, dayD);
+      if (dayDate.isBefore(today)) return true;
+      if (dayDate.isAfter(today)) return false;
+
+      // Hôm nay: kiểm tra đã qua giờ bắt đầu ca chưa
+      final startStr = shift.timeRange.split('-')[0].trim();
+      final partsStart = startStr.split(':');
+      if (partsStart.length < 2) return false;
+      final sh = int.tryParse(partsStart[0]) ?? 0;
+      final sm = int.tryParse(partsStart[1]) ?? 0;
+      final nowMinutes = now.hour * 60 + now.minute;
+      final startMinutes = sh * 60 + sm;
+      return nowMinutes >= startMinutes;
+    })();
+
     bool isLate = false;
     if (staff.checkInStatus == 'checked_in') {
       final startStr = shift.timeRange.split('-')[0].trim();
@@ -579,7 +731,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
         final sm = int.tryParse(partsStart[1]) ?? 0;
         final ch = int.tryParse(partsCheck[0]) ?? 0;
         final cm = int.tryParse(partsCheck[1]) ?? 0;
-        isLate = ch * 60 + cm - (sh * 60 + sm) > 5;
+        isLate = ch * 60 + cm - (sh * 60 + sm) > _gracePeriodMinutes;
       }
     }
     Color checkInColor = staff.checkInStatus == 'checked_in'
@@ -774,7 +926,12 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => StaffGeneralShiftDetailScreen(staff: staff, shift: shift, day: day),
+        builder: (context) => StaffGeneralShiftDetailScreen(
+          staff: staff,
+          shift: shift,
+          day: day,
+          gracePeriodMinutes: _gracePeriodMinutes,
+        ),
       ),
     );
   }

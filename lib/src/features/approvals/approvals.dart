@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
+import '../../core/state/user_scope.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../profile/employee_repository.dart';
 import 'approval_repository.dart';
@@ -52,6 +54,7 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
   final ApprovalRepository _approvalRepo = ApprovalRepository();
   late TabController _tabController;
   List<ShiftRequest> _requests = [];
+  String? _loadError;
 
   @override
   void initState() {
@@ -62,7 +65,13 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
 
   Future<void> _fetchPendingRequests() async {
     try {
-      final employees = await EmployeeRepository().getEmployees().catchError((_) => <Map<String, dynamic>>[]);
+      // Danh bạ lỗi không được làm mất danh sách đơn; tên sẽ hiện mã nhân sự.
+      List<Map<String, dynamic>> employees;
+      try {
+        employees = await EmployeeRepository().getEmployees();
+      } catch (_) {
+        employees = const [];
+      }
       final empMap = {for (final e in employees) e['id']?.toString() ?? '': e};
 
       final list = await _approvalRepo.getPending();
@@ -91,7 +100,7 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
             type: t,
             currentShift: m.title,
             reason: m.content,
-            submittedAt: m.createdAt ?? 'Vừa xong',
+            submittedAt: m.createdAt ?? '—',
             status: ShiftRequestStatus.pending,
           );
         }).toList();
@@ -100,10 +109,15 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
           // Chỉ dùng dữ liệu API thật; API rỗng thì thay toàn bộ bằng rỗng
           // để hiện empty state, không trộn/giữ mock.
           _requests = apiRequests;
+          _loadError = null;
         });
       }
-    } catch (_) {
-      // API lỗi thì giữ nguyên danh sách hiện tại (rỗng) để hiện empty state.
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loadError = e is ApiException ? e.message : 'Không tải được danh sách yêu cầu';
+        });
+      }
     }
   }
 
@@ -120,8 +134,23 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
   List<ShiftRequest> get _rejectedRequests =>
       _requests.where((r) => r.status == ShiftRequestStatus.rejected).toList();
 
-  void _approve(ShiftRequest request) {
-    _approvalRepo.approve(request.id).catchError((_) {});
+  Future<void> _approve(ShiftRequest request) async {
+    try {
+      await _approvalRepo.approve(request.id);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(backgroundColor: AppColors.error, content: Text('❌ ${e.message}')),
+      );
+      return;
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(backgroundColor: AppColors.error, content: Text('❌ Không duyệt được: $e')),
+      );
+      return;
+    }
+    if (!mounted) return;
     setState(() => request.status = ShiftRequestStatus.approved);
     final text = request.type == ShiftRequestType.swap
         ? '✅ Quản lý đã duyệt đồng ý hộ đổi ca cho ${request.staffName}'
@@ -134,8 +163,23 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
     );
   }
 
-  void _reject(ShiftRequest request) {
-    _approvalRepo.reject(request.id).catchError((_) {});
+  Future<void> _reject(ShiftRequest request) async {
+    try {
+      await _approvalRepo.reject(request.id);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(backgroundColor: AppColors.error, content: Text('❌ ${e.message}')),
+      );
+      return;
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(backgroundColor: AppColors.error, content: Text('❌ Không từ chối được: $e')),
+      );
+      return;
+    }
+    if (!mounted) return;
     setState(() => request.status = ShiftRequestStatus.rejected);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -147,10 +191,13 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
 
   @override
   Widget build(BuildContext context) {
+    final bool isAdmin = UserScope.isAdmin(context);
+    final String pageTitle = isAdmin ? 'Phê duyệt yêu cầu' : 'Duyệt yêu cầu chi nhánh';
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Phê duyệt yêu cầu nhân sự'),
+        title: Text(pageTitle),
         backgroundColor: Colors.white,
         centerTitle: true,
         elevation: 0,
@@ -199,15 +246,33 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
       child: requests.isEmpty
           ? ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              children: const [
-                SizedBox(height: 120),
+              children: [
+                const SizedBox(height: 120),
                 Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      FaIcon(FontAwesomeIcons.inbox, size: 52, color: AppColors.textSecondary),
-                      SizedBox(height: 10),
-                      Text('Không có yêu cầu nào', style: TextStyle(color: AppColors.textSecondary, fontSize: 14)),
+                      FaIcon(
+                        _loadError != null ? FontAwesomeIcons.cloudBolt : FontAwesomeIcons.inbox,
+                        size: 52,
+                        color: _loadError != null ? AppColors.error : AppColors.textSecondary,
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        _loadError ?? 'Không có yêu cầu nào',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _loadError != null ? AppColors.error : AppColors.textSecondary,
+                          fontSize: 14,
+                        ),
+                      ),
+                      if (_loadError != null) ...[
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Kéo xuống để thử lại.',
+                          style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                        ),
+                      ],
                     ],
                   ),
                 ),

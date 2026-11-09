@@ -20,8 +20,11 @@ class EmployeeRepository {
   /// Lấy chi tiết một nhân viên
   Future<Map<String, dynamic>?> getEmployee(String id) async {
     try {
-      final data = await api.getJson('/api/employees/$id');
-      if (data is Map<String, dynamic>) return data;
+      final res = await api.getJson('/api/employees/$id');
+      if (res is Map && res['data'] is Map<String, dynamic>) {
+        return (res['data'] as Map).cast<String, dynamic>();
+      }
+      if (res is Map<String, dynamic>) return res;
       return null;
     } catch (_) {
       return null;
@@ -37,35 +40,20 @@ class EmployeeRepository {
     return res is Map<String, dynamic> ? res : {};
   }
 
-  /// Lấy danh sách chi nhánh từ /api/branches (kèm fallback kBranches)
+  /// Lấy danh sách chi nhánh từ /api/branches từ backend thật.
+  /// Ném lỗi khi API thất bại để nơi gọi phân biệt được dữ liệu mới với cache cũ.
   Future<List<Branch>> getBranches() async {
-    try {
-      final data = await api.getJson('/api/branches');
-      final List list = data is List ? data : [];
-      if (list.isEmpty) return kBranches;
-      return list.whereType<Map<String, dynamic>>().map((j) {
-        final slug = (j['slug']?.toString() ?? 'hn-1').toLowerCase();
-        final code = j['code']?.toString() ?? slug.toUpperCase();
-        return Branch(
-          id: j['id']?.toString() ?? code,
-          slug: slug,
-          code: code,
-          name: j['name']?.toString() ?? 'Chi nhánh $code',
-          address: j['address']?.toString() ?? '',
-        );
-      }).toList();
-    } catch (_) {
-      return kBranches;
-    }
+    final data = await api.getJson('/api/branches');
+    final List list = data is List ? data : [];
+    final result = list.whereType<Map<String, dynamic>>().map((j) {
+      return Branch.fromJson(j);
+    }).toList();
+    updateBranchCache(result);
+    return result;
   }
 
   /// Yêu cầu thôi việc qua POST /api/employees/:id/leave
   Future<void> leaveJob(String id) async {
-    try {
-      await api.postJson('/api/employees/$id/leave', {});
-    } catch (_) {
-      // Fallback PUT status
-      await api.putJson('/api/employees/$id', {'status': 'resigned'});
-    }
+    await api.postJson('/api/employees/$id/leave', {});
   }
 }
