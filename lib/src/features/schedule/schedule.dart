@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/utils/date_format.dart';
 import 'schedule_service.dart';
 import 'shift_repository.dart';
 import 'shift_detail.dart';
@@ -34,7 +35,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   @override
   void initState() {
     super.initState();
-    final todayFormatted = '${_today.day.toString().padLeft(2, '0')}/${_today.month.toString().padLeft(2, '0')}';
+    final todayFormatted = vnDate(_today);
     _expandedDays.add(todayFormatted);
   }
 
@@ -79,9 +80,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   String _getWeekRange(int offset) {
     final monday = _thisWeekMonday.add(Duration(days: offset * 7));
     final sunday = monday.add(const Duration(days: 6));
-    final monStr = '${monday.day.toString().padLeft(2, '0')}/${monday.month.toString().padLeft(2, '0')}';
-    final sunStr = '${sunday.day.toString().padLeft(2, '0')}/${sunday.month.toString().padLeft(2, '0')}';
-    return '$monStr - $sunStr';
+    return '${vnDate(monday)} - ${vnDate(sunday)}';
   }
 
   List<DayScheduleModel> _getWeekData(int offset) {
@@ -394,7 +393,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          dayModel.date,
+                          dayModel.shortDate,
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
@@ -414,7 +413,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                         Row(
                           children: [
                             Text(
-                              '${dayModel.dayOfWeek}, ${dayModel.date}',
+                              '${dayModel.dayOfWeek}, ${toVnDate(dayModel.date)}',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 14,
@@ -565,7 +564,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${shift.role} • ${shift.branch}',
+                      shift.role.isNotEmpty
+                          ? '${shift.role} • Chi nhánh: ${shift.branch}'
+                          : (shift.branch.isNotEmpty ? 'Chi nhánh: ${shift.branch}' : ''),
                       style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
                     ),
                   ],

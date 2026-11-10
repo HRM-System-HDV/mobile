@@ -4,6 +4,7 @@ import '../../core/constants/colors.dart';
 import '../../core/models/user.dart';
 import '../../core/models/branch.dart';
 import '../../core/network/api_client.dart';
+import '../../core/utils/date_format.dart';
 import '../profile/employee_repository.dart';
 import 'news_repository.dart';
 
@@ -175,7 +176,9 @@ class _NewsScreenState extends State<NewsScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                article.author.isNotEmpty ? 'Đăng bởi: ${article.author} • ${article.date}' : 'Ngày đăng: ${article.date}',
+                article.author.isNotEmpty
+                    ? 'Đăng bởi: ${article.author} • ${toVnDate(article.date)}'
+                    : 'Ngày đăng: ${toVnDate(article.date).isEmpty ? '—' : toVnDate(article.date)}',
                 style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
               const SizedBox(height: 14),
@@ -502,7 +505,7 @@ class _NewsScreenState extends State<NewsScreen> {
                                     ],
                                   ],
                                 ),
-                                Text(a.date, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                                Text(toVnDate(a.date), style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                               ],
                             ),
                             const SizedBox(height: 8),

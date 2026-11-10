@@ -10,7 +10,7 @@ class UploadService {
   UploadService({ApiClient? api}) : _api = api ?? ApiClient();
 
   /// Cho phép người dùng chụp ảnh từ Camera hoặc chọn từ Thư viện ảnh,
-  /// sau đó nén và tải trực tiếp lên Cloudinary thông qua API Gateway (/api/upload).
+  /// sau đó nén và tải lên lưu trữ nội bộ thông qua API Gateway (/api/upload).
   Future<String?> pickAndUploadImage({
     ImageSource source = ImageSource.gallery,
     String folder = 'hrm',
@@ -37,7 +37,7 @@ class UploadService {
     }
   }
 
-  /// Tải trực tiếp chuỗi Data URL (data:image/...;base64,...) lên Cloudinary qua API Gateway.
+  /// Tải chuỗi Data URL (data:image/...;base64,...) lên lưu trữ nội bộ qua API Gateway.
   Future<String> uploadDataUrl(String dataUrl, {String folder = 'hrm'}) async {
     final res = await _api.postJson('/api/upload', {
       'file': dataUrl,
@@ -48,7 +48,7 @@ class UploadService {
         : (res is Map ? res.cast<String, dynamic>() : <String, dynamic>{});
     final url = data['url']?.toString() ?? '';
     if (url.isEmpty) {
-      throw Exception('Không nhận được đường dẫn ảnh từ Cloudinary');
+      throw Exception('Không nhận được đường dẫn ảnh từ máy chủ');
     }
     return url;
   }

@@ -6,6 +6,7 @@ import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/models/user.dart';
 import '../../core/network/api_client.dart';
+import '../../core/utils/image_helper.dart';
 import '../schedule/schedule.dart';
 import '../salary/salary.dart';
 import '../leave_request/leave.dart';
@@ -16,6 +17,7 @@ import '../tasks/tasks.dart';
 import '../attendance/attendance_repository.dart';
 import '../schedule/shift_repository.dart';
 import '../wifi_config/wifi_config_repository.dart';
+import '../profile/employee_repository.dart';
 
 class HomeScreen extends StatefulWidget {
   final UserModel currentUser;
@@ -73,7 +75,22 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_loadedShiftUserKey != userKey) {
       _loadedShiftUserKey = userKey;
       _fetchTodayShifts(employeeId: userKey.isNotEmpty ? userKey : null);
+      _refreshAvatar();
     }
+  }
+
+  /// Avatar nằm ở organization-service chứ không có trong /api/auth/me, nên phải
+  /// đọc lại hồ sơ để ảnh sửa từ nơi khác vẫn hiện ở Trang chủ.
+  Future<void> _refreshAvatar() async {
+    final me = currentUser;
+    if (me.id.isEmpty) return;
+    final profile = await EmployeeRepository().getEmployee(me.id);
+    if (!mounted) return;
+    final current = UserScope.currentUser(context);
+    if (current == null || current.id != me.id) return;
+    final avatar = profile?['avatar']?.toString();
+    if (avatar == null || avatar == current.avatarUrl) return;
+    UserScope.setUser(context, current.copyWith(avatarUrl: avatar));
   }
 
   Future<void> _fetchTodayShifts({String? employeeId}) async {
@@ -259,6 +276,41 @@ class _HomeScreenState extends State<HomeScreen> {
     return 'Chào buổi tối 👋';
   }
 
+  /// Ảnh đại diện lấy từ hồ sơ đã đồng bộ qua API (UserScope). Khi ảnh đang tải
+  /// hoặc lỗi thì hiện icon vai trò bên dưới, không giữ trạng thái lỗi vĩnh viễn.
+  Widget _buildAvatar() {
+    final fallback = ColoredBox(
+      color: AppColors.primary.withValues(alpha: 0.12),
+      child: Center(
+        child: Icon(
+          currentUser.canManage ? Icons.admin_panel_settings_outlined : Icons.person_outline_rounded,
+          color: AppColors.primary,
+          size: 28,
+        ),
+      ),
+    );
+    final provider = parseImageProvider(currentUser.avatarUrl);
+    return ClipOval(
+      child: SizedBox(
+        width: 52,
+        height: 52,
+        child: provider == null
+            ? fallback
+            : Stack(
+                fit: StackFit.expand,
+                children: [
+                  fallback,
+                  Image(
+                    image: provider,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
   Widget _buildHeader(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
@@ -269,20 +321,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: Row(
         children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: Icon(
-              currentUser.canManage ? Icons.admin_panel_settings_outlined : Icons.person_outline_rounded,
-              color: AppColors.primary,
-              size: 28,
-            ),
-          ),
+          _buildAvatar(),
           const SizedBox(width: 14),
           Expanded(
             child: Column(

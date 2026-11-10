@@ -62,6 +62,23 @@ class ApiClient {
     _remember = false;
   }
 
+  /// Header cho ảnh phục vụ sau JWT của gateway (/api/files). Chỉ gắn khi URL
+  /// cùng origin gateway để không lộ token ra dịch vụ ngoài (ảnh cũ lưu nơi khác).
+  static Map<String, String>? imageHeadersFor(String url) {
+    final uri = Uri.tryParse(url);
+    final base = Uri.tryParse(CompanyConfig.apiBaseUrl);
+    if (uri == null || base == null) return null;
+    final sameOrigin =
+        uri.scheme == base.scheme && uri.host == base.host && uri.port == base.port;
+    if (!sameOrigin || !uri.path.startsWith('/api/files/')) return null;
+    final h = <String, String>{};
+    final cookie = _globalCookie;
+    if (cookie != null) h['Cookie'] = cookie;
+    final token = _globalAccessToken;
+    if (token != null) h['Authorization'] = 'Bearer $token';
+    return h;
+  }
+
   /// Bật thì ghi token vào Keychain/Keystore, tắt thì xóa bản đã lưu.
   /// Storage lỗi thì bỏ qua: phiên trong memory vẫn dùng được cho lần chạy này.
   static Future<void> persistSession({required bool remember}) async {

@@ -4,6 +4,7 @@ import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/utils/date_format.dart';
 import '../leave_request/leave_repository.dart';
 import 'salary_repository.dart';
 
@@ -370,7 +371,9 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
               ],
             ),
             const SizedBox(height: 6),
-            Text('Ngày gửi: ${rec.date} • Lý do: ${rec.reason}', style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+            Text(
+                'Ngày gửi: ${toVnDateTime(rec.date).isEmpty ? '—' : toVnDateTime(rec.date)} • Lý do: ${rec.reason}',
+                style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
           ],
         ),
       ),

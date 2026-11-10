@@ -5,6 +5,7 @@ import '../../core/network/api_client.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../../core/widgets/week_strip.dart';
 import '../../core/models/user.dart';
+import '../../core/utils/date_format.dart';
 import 'shift_repository.dart';
 import '../profile/employee_repository.dart';
 
@@ -128,9 +129,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
   String _getWeekRange(int offset) {
     final monday = _thisWeekMonday.add(Duration(days: offset * 7));
     final sunday = monday.add(const Duration(days: 6));
-    final monStr = '${monday.day.toString().padLeft(2, '0')}/${monday.month.toString().padLeft(2, '0')}';
-    final sunStr = '${sunday.day.toString().padLeft(2, '0')}/${sunday.month.toString().padLeft(2, '0')}';
-    return '$monStr - $sunStr';
+    return '${vnDate(monday)} - ${vnDate(sunday)}';
   }
 
   String? _loadedBranchSlug;
@@ -163,26 +162,11 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
     };
   }
 
-  String _ddMM(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}';
+  /// Khóa ngắn dd/MM (chỉ dùng để so khớp đăng ký ca cũ; ngày gửi API là DD/MM/YYYY).
+  String _ddMM(DateTime d) => vnDate(d).substring(0, 5);
 
-  DateTime? _parseShiftDate(String raw) {
-    try {
-      if (raw.contains('-')) {
-        final parts = raw.split('-');
-        if (parts.first.length == 4) return DateTime.parse(raw);
-        if (parts.length == 3) {
-          return DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
-        }
-      } else if (raw.contains('/')) {
-        final parts = raw.split('/');
-        if (parts.length == 3) {
-          return DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
-        }
-      }
-    } catch (_) {}
-    return null;
-  }
+  /// Đọc ngày ca từ API (DD/MM/YYYY, ISO hoặc dd-MM-yyyy cũ) về DateTime.
+  DateTime? _parseShiftDate(String raw) => parseVnDate(raw);
 
   void _showError(String message) {
     if (!mounted) return;
@@ -261,14 +245,19 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
       // của ngày đăng ký. Phải quy đổi sang thứ và tên ca, không đoán mặc định.
       final rawRegs = await ShiftRepository().getRegistrations(branchSlug: branch?.slug);
       final monday = _thisWeekMonday.add(Duration(days: _weekOffset * 7));
-      final dayKeyByDate = {
-        for (var i = 0; i < 7; i++) _ddMM(monday.add(Duration(days: i))): _weekDayKeys[i],
-      };
+      final dayKeyByDate = <String, String>{};
+      for (var i = 0; i < 7; i++) {
+        final d = monday.add(Duration(days: i));
+        // Khóa mới DD/MM/YYYY; giữ thêm khóa dd/MM để đọc được đăng ký cũ.
+        dayKeyByDate[vnDate(d)] = _weekDayKeys[i];
+        dayKeyByDate[_ddMM(d)] = _weekDayKeys[i];
+      }
       final shiftNameById = {for (final s in templates) s.id: s.name};
       final wishes = <String, Map<String, String>>{};
       for (final r in rawRegs) {
         final empId = r['employeeId']?.toString() ?? '';
-        final dayKey = dayKeyByDate[r['week']?.toString() ?? ''];
+        final rawWeek = r['week']?.toString() ?? '';
+        final dayKey = dayKeyByDate[toVnDate(rawWeek)] ?? dayKeyByDate[rawWeek];
         final shiftName = shiftNameById[r['shiftId']?.toString() ?? ''];
         if (empId.isEmpty || dayKey == null || shiftName == null) continue;
         (wishes[empId] ??= {})[dayKey] = shiftName;
@@ -363,7 +352,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
       return;
     }
     final targetDate = _thisWeekMonday.add(Duration(days: _weekOffset * 7 + dayIndex));
-    final dateStr = '${targetDate.year}-${targetDate.month.toString().padLeft(2, '0')}-${targetDate.day.toString().padLeft(2, '0')}';
+    final dateStr = vnDate(targetDate);
 
     try {
       final created = await ShiftRepository().createShift({
@@ -373,7 +362,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
         'template': shiftName,
         'scheduledStart': shiftInfo.startTime,
         'scheduledEnd': shiftInfo.endTime,
-        'status': 'Chưa làm',
+        'status': 'Chưa chấm công',
         'note': '',
         'isRecurring': staff.isRecurring,
       });
@@ -840,7 +829,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
             final dayName = _weekDayFullNames[_selectedDayIndex];
             final monday = _thisWeekMonday.add(Duration(days: _weekOffset * 7));
             final selectedDate = monday.add(Duration(days: _selectedDayIndex));
-            final dateStr = '${selectedDate.day.toString().padLeft(2, '0')}/${selectedDate.month.toString().padLeft(2, '0')}';
+            final dateStr = vnDate(selectedDate);
 
             return Container(
               decoration: const BoxDecoration(
@@ -959,14 +948,16 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                                       ),
                                     ),
                                     const SizedBox(height: 2),
-                                    Row(
+                                    Wrap(
+                                      spacing: 6,
+                                      runSpacing: 2,
+                                      crossAxisAlignment: WrapCrossAlignment.center,
                                       children: [
                                         Text(
                                           emp.role,
                                           style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                                         ),
-                                        if (matchesWish) ...[
-                                          const SizedBox(width: 6),
+                                        if (matchesWish)
                                           Container(
                                             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                                             decoration: BoxDecoration(
@@ -979,7 +970,6 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                                               style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Color(0xFFB45309)),
                                             ),
                                           ),
-                                        ],
                                       ],
                                     ),
                                   ],

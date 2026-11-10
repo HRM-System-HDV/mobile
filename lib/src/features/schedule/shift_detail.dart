@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/utils/date_format.dart';
 import '../attendance/attendance_repository.dart';
 import '../attendance/adjustment.dart';
 import 'schedule.dart';
@@ -125,10 +126,10 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Header tổng quan ──────────────────────────────────
+            // ── Header tổng quan gọn gàng ─────────────────────────
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(18),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
@@ -136,49 +137,59 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.03),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
                   ),
                 ],
               ),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(12),
+                    width: 44,
+                    height: 44,
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.1),
+                      color: AppColors.primary.withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const FaIcon(FontAwesomeIcons.clock, color: AppColors.primary, size: 28),
+                    child: const Center(
+                      child: FaIcon(FontAwesomeIcons.clock, color: AppColors.primary, size: 20),
+                    ),
                   ),
-                  const SizedBox(width: 14),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           shift.shiftName,
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary,
+                          ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 3),
                         Text(
-                          '${widget.dayOfWeek}, ${widget.date}/${DateTime.now().year} • ${shift.timeRange}',
-                          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                          '${widget.dayOfWeek}, ${toVnDate(widget.date)} • ${shift.timeRange}',
+                          style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                     decoration: BoxDecoration(
-                      color: statusColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
+                      color: statusColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
                       statusText,
-                      style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 12),
+                      style: TextStyle(
+                        color: statusColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11.5,
+                      ),
                     ),
                   ),
                 ],
@@ -217,7 +228,7 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
               child: Column(
                 children: [
                   _buildInfoRow(FontAwesomeIcons.calendarDay, 'Ngày tính công',
-                      '${widget.date}/${DateTime.now().year} (${widget.dayOfWeek})'),
+                      '${toVnDate(widget.date)} (${widget.dayOfWeek})'),
                   _divider(),
                   _buildInfoRow(FontAwesomeIcons.user, 'Nhân viên',
                       UserScope.currentUser(context)?.name ?? '—'),

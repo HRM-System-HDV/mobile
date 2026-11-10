@@ -4,6 +4,7 @@ import '../../core/constants/colors.dart';
 import '../../core/models/payslip.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/utils/date_format.dart';
 import '../attendance/attendance_repository.dart';
 import '../leave_request/leave_repository.dart';
 import '../schedule/shift_repository.dart';
@@ -109,13 +110,12 @@ class _SalaryScreenState extends State<SalaryScreen> {
       double hoursCount = 0.0;
       bool hoursUnknown = false;
       for (final s in allShifts) {
-        // Lọc theo tháng đang chọn nếu có
-        if (q.isNotEmpty && s.date.contains('-')) {
-          final parts = s.date.split('-');
-          if (parts.length >= 3) {
-            final shiftMonth = '${parts[1]}-${parts[2]}';
-            if (shiftMonth != q) continue;
-          }
+        // Lọc theo tháng đang chọn nếu có (đọc được cả DD/MM/YYYY lẫn ISO cũ)
+        final shiftDate = parseVnDate(s.date);
+        if (q.isNotEmpty && shiftDate != null) {
+          final shiftMonth =
+              '${shiftDate.month.toString().padLeft(2, '0')}-${shiftDate.year}';
+          if (shiftMonth != q) continue;
         }
         shiftCount++;
         final pStart = s.scheduledStart.split(':');
@@ -156,15 +156,14 @@ class _SalaryScreenState extends State<SalaryScreen> {
       double doneHours = 0.0;
       bool hoursUnknown = false;
       for (final a in atts) {
-        // Lọc theo tháng
-        if (q.isNotEmpty && a.date.contains('-')) {
-          final parts = a.date.split('-');
-          if (parts.length >= 3) {
-            final attMonth = '${parts[1]}-${parts[2]}';
-            if (attMonth != q) continue;
-          }
+        // Lọc theo tháng (đọc được cả DD/MM/YYYY lẫn ISO cũ)
+        final attDate = parseVnDate(a.date);
+        if (q.isNotEmpty && attDate != null) {
+          final attMonth =
+              '${attDate.month.toString().padLeft(2, '0')}-${attDate.year}';
+          if (attMonth != q) continue;
         }
-        final date = a.date.isNotEmpty ? a.date : '—';
+        final date = a.date.trim().isNotEmpty ? toVnDate(a.date) : '—';
         final checkIn = a.checkIn ?? '--:--';
         final checkOut = a.checkOut ?? '--:--';
         double? hours;

@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/utils/date_format.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../profile/employee_repository.dart';
 import 'approval_repository.dart';
@@ -449,19 +450,8 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
                       _buildDetailRow(FontAwesomeIcons.arrowRightArrowLeft, 'Đổi sang', request.targetShift!),
                     if (request.swapWithName != null)
                       _buildDetailRow(FontAwesomeIcons.person, 'Người liên quan', request.swapWithName!),
-                    const SizedBox(height: 4),
                     _buildDetailRow(FontAwesomeIcons.message, 'Lý do', request.reason),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        const FaIcon(FontAwesomeIcons.clock, size: 13, color: AppColors.textSecondary),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Gửi lúc: ${request.submittedAt}',
-                          style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                        ),
-                      ],
-                    ),
+                    _buildDetailRow(FontAwesomeIcons.clock, 'Gửi lúc', _formatDateTime(request.submittedAt)),
                   ],
                 ),
               ),
@@ -666,11 +656,7 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
                   if (request.swapWithName != null)
                     _buildDetailRow(FontAwesomeIcons.person, 'Người liên quan', request.swapWithName!),
                   _buildDetailRow(FontAwesomeIcons.message, 'Lý do', request.reason),
-                  const SizedBox(height: 4),
-                  Text(
-                    '🕐 Gửi lúc: ${request.submittedAt}',
-                    style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                  ),
+                  _buildDetailRow(FontAwesomeIcons.clock, 'Gửi lúc', _formatDateTime(request.submittedAt)),
                 ],
               ),
             ),
@@ -733,17 +719,38 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
     );
   }
 
+  String _formatDateTime(String? raw) {
+    final trimmed = raw?.trim() ?? '';
+    if (trimmed.isEmpty || trimmed == '—') return '—';
+    // Đọc được cả DD/MM/YYYY HH:mm lẫn ISO của dữ liệu cũ.
+    final dt = parseVnDate(trimmed);
+    if (dt == null) return trimmed;
+    return vnDateTime(dt);
+  }
+
   Widget _buildDetailRow(FaIconData icon, String label, String value) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          FaIcon(icon, size: 14, color: AppColors.textSecondary),
-          const SizedBox(width: 6),
-          Text('$label: ', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          Container(
+            width: 20,
+            alignment: Alignment.centerLeft,
+            child: FaIcon(icon, size: 13, color: AppColors.textSecondary),
+          ),
+          SizedBox(
+            width: 76,
+            child: Text(
+              '$label:',
+              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+          ),
           Expanded(
-            child: Text(value, style: const TextStyle(fontSize: 12, color: AppColors.textPrimary, fontWeight: FontWeight.w500)),
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 12, color: AppColors.textPrimary, fontWeight: FontWeight.w600),
+            ),
           ),
         ],
       ),
