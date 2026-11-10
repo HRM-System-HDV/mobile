@@ -6,6 +6,7 @@ import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../../core/widgets/week_strip.dart';
+import '../../core/utils/date_format.dart';
 import 'shift_repository.dart';
 
 class ShiftOption {
@@ -108,9 +109,7 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
   String _getWeekRange(int offset) {
     final monday = _getWeekMonday(offset);
     final sunday = monday.add(const Duration(days: 6));
-    final monStr = '${monday.day.toString().padLeft(2, '0')}/${monday.month.toString().padLeft(2, '0')}';
-    final sunStr = '${sunday.day.toString().padLeft(2, '0')}/${sunday.month.toString().padLeft(2, '0')}';
-    return '$monStr - $sunStr';
+    return '${vnDate(monday)} - ${vnDate(sunday)}';
   }
 
   String _getWeekTitle(int offset) {
@@ -132,10 +131,9 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
 
     final days = List.generate(7, (i) {
       final dayDate = monday.add(Duration(days: i));
-      final dateStr = '${dayDate.day.toString().padLeft(2, '0')}/${dayDate.month.toString().padLeft(2, '0')}';
       return DayShiftRegistration(
         dayName: dayNames[i],
-        dateStr: dateStr,
+        dateStr: vnDate(dayDate),
         shortKey: shortKeys[i],
         selectedShiftIds: <String>{},
       );
@@ -216,7 +214,7 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
           final shiftId = r['shiftId']?.toString() ?? '';
           if (shiftId != 'preference_note' && shiftId.isNotEmpty && shiftId != 'off') {
             for (final day in weekData.days) {
-              if (day.dateStr == pref ||
+              if (_isSameDay(pref, day.dateStr) ||
                   pref.contains(day.dateStr) ||
                   day.shortKey.toUpperCase() == pref.toUpperCase()) {
                 day.selectedShiftIds.add(shiftId);
@@ -236,6 +234,16 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
         ),
       );
     }
+  }
+
+  /// So khớp ngày đăng ký cũ (dd/MM) và mới (DD/MM/YYYY) với một ngày của tuần.
+  bool _isSameDay(String a, String b) {
+    final da = parseVnDate(a);
+    final db = parseVnDate(b);
+    if (da != null && db != null) {
+      return da.year == db.year && da.month == db.month && da.day == db.day;
+    }
+    return a == b || a.contains(b) || b.contains(a);
   }
 
   void _onWeekChanged(int newOffset) {
@@ -387,11 +395,8 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
             weekLabel: '${_getWeekTitle(_weekOffset)}  •  ${_getWeekRange(_weekOffset)}',
             days: List.generate(weekData.days.length, (index) {
               final day = weekData.days[index];
-              final parts = day.dateStr.split('/');
-              final dayNum = parts.isNotEmpty ? (int.tryParse(parts[0]) ?? 0) : 0;
-              final isToday = day.dayName == 'Hôm nay' ||
-                  (day.dateStr ==
-                      '${_today.day.toString().padLeft(2, '0')}/${_today.month.toString().padLeft(2, '0')}');
+              final dayNum = parseVnDate(day.dateStr)?.day ?? 0;
+              final isToday = day.dayName == 'Hôm nay' || _isSameDay(day.dateStr, vnDate(_today));
               final hasRegistered = !day.isOff;
               return {
                 'label': day.shortKey,

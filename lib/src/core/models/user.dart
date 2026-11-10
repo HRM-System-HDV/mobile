@@ -31,7 +31,7 @@ class UserModel {
   final String bankAccountNumber; // Số tài khoản ngân hàng
   final String bankAccountName; // Tên chủ tài khoản
 
-  /// Hình ảnh xác thực (Cloudinary)
+  /// Hình ảnh xác thực (lưu trữ nội bộ)
   final String? avatarUrl;
   final String? cccdFrontUrl;
   final String? cccdBackUrl;

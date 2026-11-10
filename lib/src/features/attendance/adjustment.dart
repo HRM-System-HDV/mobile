@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/utils/date_format.dart';
 import '../leave_request/leave_repository.dart';
 import '../schedule/shift_repository.dart';
 
@@ -79,9 +80,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
             final reasonMatch = RegExp(r'Lý do:\s*(.*)', dotAll: true).firstMatch(r.content);
             _items.add(AdjustmentItem(
               id: r.id,
-              date: r.createdAt != null && r.createdAt!.length >= 10
-                  ? r.createdAt!.substring(0, 10)
-                  : '—',
+              date: (r.createdAt ?? '').trim().isEmpty ? '—' : toVnDate(r.createdAt),
               shiftName: r.title,
               checkIn: inMatch != null ? inMatch.group(1)!.trim() : '—',
               checkOut: outMatch != null ? outMatch.group(1)!.trim() : '—',
@@ -428,7 +427,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
             const SizedBox(height: 4),
             Text('Lý do: ${item.reason}', style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
             const SizedBox(height: 6),
-            Text('Gửi lúc: ${item.createdAt}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+            Text('Gửi lúc: ${item.createdAt.trim().isEmpty ? '—' : toVnDateTime(item.createdAt)}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
           ],
         ),
       ),

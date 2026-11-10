@@ -1,4 +1,5 @@
 import '../../core/network/api_client.dart';
+import '../../core/utils/date_format.dart';
 
 class ApiShiftModel {
   final String id;
@@ -53,7 +54,7 @@ class ApiShiftModel {
   Map<String, dynamic> toJson() => {
         if (employeeId != null) 'employeeId': employeeId,
         if (branchSlug != null) 'branchSlug': branchSlug,
-        'date': date,
+        'date': toVnDate(date),
         'template': template,
         'scheduledStart': scheduledStart,
         'scheduledEnd': scheduledEnd,
@@ -75,7 +76,7 @@ class ShiftRepository {
     final query = <String, String>{};
     if (branchSlug != null && branchSlug.isNotEmpty) query['branchSlug'] = branchSlug;
     if (employeeId != null && employeeId.isNotEmpty) query['employeeId'] = employeeId;
-    if (date != null && date.isNotEmpty) query['date'] = date;
+    if (date != null && date.isNotEmpty) query['date'] = toVnDate(date);
 
     final data = await api.getJson('/api/shifts', query: query);
     final List list = data is List ? data : [];
@@ -109,14 +110,16 @@ class ShiftRepository {
     String? preference,
     String? branchSlug,
   }) async {
+    // Ngày đăng ký gửi backend luôn ở dạng DD/MM/YYYY.
+    final pref = preference == null ? null : toVnDate(preference);
     await api.postJson('/api/shifts/register', {
       'employeeId': employeeId,
       'shiftId': shiftId,
       if (branchSlug != null && branchSlug.isNotEmpty) 'branchSlug': branchSlug,
-      if (preference != null) 'preference': preference,
-      if (preference != null) 'week': preference,
-      if (preference != null) 'day': preference,
-      if (preference != null) 'wish': preference,
+      if (pref != null) 'preference': pref,
+      if (pref != null) 'week': pref,
+      if (pref != null) 'day': pref,
+      if (pref != null) 'wish': pref,
     });
   }
 
@@ -125,13 +128,15 @@ class ShiftRepository {
     required String shiftId,
     String? preference,
   }) async {
+    // Ngày đăng ký gửi backend luôn ở dạng DD/MM/YYYY.
+    final pref = preference == null ? null : toVnDate(preference);
     await api.postJson('/api/shifts/unregister', {
       'employeeId': employeeId,
       'shiftId': shiftId,
-      if (preference != null) 'preference': preference,
-      if (preference != null) 'week': preference,
-      if (preference != null) 'day': preference,
-      if (preference != null) 'wish': preference,
+      if (pref != null) 'preference': pref,
+      if (pref != null) 'week': pref,
+      if (pref != null) 'day': pref,
+      if (pref != null) 'wish': pref,
     });
   }
 

@@ -7,6 +7,7 @@ import '../../core/state/branch_scope.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../../core/models/branch.dart';
 import '../../core/models/user.dart';
+import '../../core/utils/date_format.dart';
 import '../profile/employee_repository.dart';
 import '../schedule/shift_repository.dart';
 import 'task_service.dart';
@@ -265,7 +266,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
               ),
               const SizedBox(height: 16),
 
-              // Chụp ảnh minh chứng tải lên Cloudinary
+              // Chụp ảnh minh chứng tải lên máy chủ nội bộ
               if (tempPhotoUrl == null)
                 InkWell(
                   onTap: isUploading
@@ -319,7 +320,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                             setSheetState(() => isUploading = false);
                             if (mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Lỗi tải ảnh lên Cloudinary: $e')),
+                                SnackBar(content: Text('Lỗi tải ảnh lên máy chủ: $e')),
                               );
                             }
                           }
@@ -340,7 +341,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                                 CircularProgressIndicator(color: AppColors.primary),
                                 SizedBox(height: 12),
                                 Text(
-                                  'Đang tải ảnh lên Cloudinary...',
+                                  'Đang tải ảnh lên máy chủ...',
                                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.primary),
                                 ),
                               ],
@@ -380,6 +381,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                           borderRadius: BorderRadius.circular(16),
                           child: Image.network(
                             tempPhotoUrl!,
+                            headers: ApiClient.imageHeadersFor(tempPhotoUrl!),
                             height: 180,
                             width: double.infinity,
                             fit: BoxFit.cover,
@@ -624,9 +626,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
             _buildDetailRow(
               Icons.access_time_rounded,
               'Hạn hoàn thành',
-              task.dueDate == null
-                  ? 'Chưa đặt hạn'
-                  : '${task.dueDate!.hour.toString().padLeft(2, '0')}:${task.dueDate!.minute.toString().padLeft(2, '0')} ngày ${task.dueDate!.day}/${task.dueDate!.month}/${task.dueDate!.year}',
+              task.dueDate == null ? 'Chưa đặt hạn' : vnDateTime(task.dueDate!),
               highlight: task.isOverdue,
             ),
             _buildDetailRow(
@@ -639,7 +639,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
               _buildDetailRow(
                 Icons.check_circle_outline_rounded,
                 'Đã hoàn thành lúc',
-                '${task.completedAt!.hour.toString().padLeft(2, '0')}:${task.completedAt!.minute.toString().padLeft(2, '0')} ngày ${task.completedAt!.day}/${task.completedAt!.month}',
+                vnDateTime(task.completedAt!),
                 valueColor: AppColors.success,
               ),
 
@@ -655,6 +655,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                 borderRadius: BorderRadius.circular(12),
                 child: Image.network(
                   task.proofPhotoUrl!,
+                  headers: ApiClient.imageHeadersFor(task.proofPhotoUrl!),
                   height: 150,
                   width: double.infinity,
                   fit: BoxFit.cover,
@@ -964,7 +965,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                             ),
                             const SizedBox(height: 3),
                             Text(
-                              '${selectedDeadline.hour.toString().padLeft(2, '0')}:${selectedDeadline.minute.toString().padLeft(2, '0')} - ${selectedDeadline.day.toString().padLeft(2, '0')}/${selectedDeadline.month.toString().padLeft(2, '0')}/${selectedDeadline.year}',
+                              vnDateTime(selectedDeadline),
                               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                             ),
                           ],
@@ -1060,7 +1061,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                         ? 'urgent'
                         : (selectedPriority == TaskPriority.high ? 'high' : 'normal');
 
-                    final dueDateIso = '${selectedDeadline.year}-${selectedDeadline.month.toString().padLeft(2, '0')}-${selectedDeadline.day.toString().padLeft(2, '0')} ${selectedDeadline.hour.toString().padLeft(2, '0')}:${selectedDeadline.minute.toString().padLeft(2, '0')}';
+                    final dueDateStr = vnDateTime(selectedDeadline);
 
                     final currentUserName = widget.currentUser.name.isNotEmpty
                         ? '${widget.currentUser.name} (${widget.currentUser.roleTitle.isNotEmpty ? widget.currentUser.roleTitle : 'Quản lý'})'
@@ -1072,7 +1073,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                         description: descCtrl.text.trim(),
                         branchSlug: effectiveBranch,
                         priority: priStr,
-                        dueDate: dueDateIso,
+                        dueDate: dueDateStr,
                         assigneeId: assigneeId,
                         sourceType: isShift ? 'shift' : 'manager',
                         assignedByName: isShift ? 'Quy trình ${selectedShift.split('(')[0].trim()}' : currentUserName,

@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/utils/date_format.dart';
 import '../approvals/approval_repository.dart';
 
 enum ShiftRequestStatus { pending, accepted, rejected }
@@ -185,7 +186,7 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${widget.shiftDate} • ${widget.shiftTime}',
+                          '${toVnDate(widget.shiftDate)} • ${widget.shiftTime}',
                           style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                         ),
                       ],
@@ -230,7 +231,8 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
               ),
               child: Column(
                 children: [
-                  _buildInfoRow(FontAwesomeIcons.calendarDay, 'Ngày làm việc', widget.shiftDate),
+                  _buildInfoRow(FontAwesomeIcons.calendarDay, 'Ngày làm việc',
+                      toVnDate(widget.shiftDate).isEmpty ? '—' : toVnDate(widget.shiftDate)),
                   _divider(),
                   _buildInfoRow(FontAwesomeIcons.clock, 'Khung giờ ca', widget.shiftTime),
                   _divider(),
@@ -285,7 +287,8 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
                   children: [
                     _buildInfoRow(FontAwesomeIcons.briefcase, 'Ca làm việc', widget.swapShiftName ?? '—'),
                     _divider(),
-                    _buildInfoRow(FontAwesomeIcons.calendarDay, 'Ngày làm việc', widget.swapShiftDate ?? '—'),
+                    _buildInfoRow(FontAwesomeIcons.calendarDay, 'Ngày làm việc',
+                        toVnDate(widget.swapShiftDate).isEmpty ? '—' : toVnDate(widget.swapShiftDate)),
                     _divider(),
                     _buildInfoRow(FontAwesomeIcons.clock, 'Khung giờ ca', widget.swapShiftTime ?? '—'),
                     _divider(),
@@ -301,42 +304,44 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
               ),
             ],
 
-            // ── Lý do / Lời nhắn ─────────────────────────────────────
-            const SizedBox(height: 20),
-            const Text(
-              'Lý do / Lời nhắn',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-            ),
-            const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.grey.shade200),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.03),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
+            // ── Lý do / Lời nhắn (chỉ hiển thị khi không phải cover hoặc có lý do cụ thể) ──
+            if (!isCover && widget.reason.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              const Text(
+                'Lý do / Lời nhắn',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
               ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const FaIcon(FontAwesomeIcons.quoteLeft, size: 18, color: AppColors.primary),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      widget.reason.isNotEmpty ? widget.reason : 'Không có ghi chú thêm.',
-                      style: const TextStyle(fontSize: 13.5, height: 1.45, fontStyle: FontStyle.italic, color: AppColors.textPrimary),
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.grey.shade200),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.03),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
                     ),
-                  ),
-                ],
+                  ],
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const FaIcon(FontAwesomeIcons.quoteLeft, size: 18, color: AppColors.primary),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        widget.reason,
+                        style: const TextStyle(fontSize: 13.5, height: 1.45, fontStyle: FontStyle.italic, color: AppColors.textPrimary),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
+            ],
             const SizedBox(height: 30),
           ],
         ),

@@ -4,6 +4,7 @@ import '../../core/constants/colors.dart';
 import '../../core/models/user.dart';
 import '../../core/models/branch.dart';
 import '../../core/network/api_client.dart';
+import '../../core/utils/date_format.dart';
 import '../profile/employee_repository.dart';
 import 'regulation_repository.dart';
 
@@ -184,9 +185,11 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                regulation.author.isNotEmpty
-                    ? 'Ban hành bởi: ${regulation.author}${regulation.effectiveDate.isNotEmpty ? ' • Hiệu lực: ${regulation.effectiveDate}' : ''}'
-                    : (regulation.effectiveDate.isNotEmpty ? 'Hiệu lực: ${regulation.effectiveDate}' : ''),
+                toVnDate(regulation.effectiveDate).isEmpty
+                    ? (regulation.author.isNotEmpty ? 'Ban hành bởi: ${regulation.author}' : '')
+                    : (regulation.author.isNotEmpty
+                        ? 'Ban hành bởi: ${regulation.author} • Hiệu lực: ${toVnDate(regulation.effectiveDate)}'
+                        : 'Hiệu lực: ${toVnDate(regulation.effectiveDate)}'),
                 style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
               ),
               const SizedBox(height: 14),
@@ -208,7 +211,7 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
     final summaryCtrl = TextEditingController();
     final contentCtrl = TextEditingController();
     final effectiveDateCtrl = TextEditingController(
-      text: '${DateTime.now().day.toString().padLeft(2, '0')}/${DateTime.now().month.toString().padLeft(2, '0')}/${DateTime.now().year}',
+      text: vnDate(DateTime.now()),
     );
     final versionCtrl = TextEditingController(text: '1.0');
     String selectedCategory = 'Nội quy lao động';
@@ -400,7 +403,7 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
                         summary: summaryCtrl.text.trim().isNotEmpty ? summaryCtrl.text.trim() : null,
                         scope: selectedScope,
                         status: selectedStatus,
-                        effectiveDate: effectiveDateCtrl.text.trim(),
+                        effectiveDate: toVnDate(effectiveDateCtrl.text.trim()),
                         version: versionCtrl.text.trim(),
                         pinned: isPinned,
                         author: '${widget.currentUser.name} (${widget.currentUser.roleTitle})',
@@ -588,7 +591,7 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
                                     ] else if (r.effectiveDate.isNotEmpty) ...[
                                       const FaIcon(FontAwesomeIcons.calendar, size: 13, color: AppColors.textSecondary),
                                       const SizedBox(width: 4),
-                                      Text(r.effectiveDate, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                                      Text(toVnDate(r.effectiveDate), style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                                     ],
                                     const Spacer(),
                                     const Text('Chi tiết', style: TextStyle(fontSize: 11.5, color: AppColors.primary, fontWeight: FontWeight.bold)),

@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/utils/date_format.dart';
 import '../leave_request/leave_repository.dart';
 import '../profile/employee_repository.dart';
 import 'shift_repository.dart';
@@ -64,7 +65,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
   String? _selectedTargetShift;
   ShiftStaffMember? _selectedSwapStaff;
 
-  // Dữ liệu phân ca thực tế theo Ngày (yyyy-MM-dd) -> Ca -> Danh sách nhân viên.
+  // Dữ liệu phân ca thực tế theo Ngày (DD/MM/YYYY) -> Ca -> Danh sách nhân viên.
   // Dựng từ /api/shifts, API rỗng thì map rỗng (hiện trống, không dùng mẫu cứng).
   Map<String, Map<String, List<ShiftStaffMember>>> _scheduleShiftStaffData = {};
   bool _loadingRefs = true;
@@ -75,21 +76,10 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
     _loadRefs();
   }
 
-  /// Chuẩn hóa ngày backend (dd/MM/yyyy hoặc ISO) về khóa yyyy-MM-dd.
-  String _toIsoKey(String raw) {
-    final v = raw.trim();
-    final dmY = RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{4})$').firstMatch(v);
-    if (dmY != null) {
-      final d = dmY.group(1)!.padLeft(2, '0');
-      final m = dmY.group(2)!.padLeft(2, '0');
-      final y = dmY.group(3)!;
-      return '$y-$m-$d';
-    }
-    final dt = DateTime.tryParse(v);
-    if (dt != null) {
-      return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
-    }
-    return v;
+  /// Chuẩn hóa mọi định dạng ngày backend (DD/MM/YYYY, ISO, dd-MM-yyyy) về khóa DD/MM/YYYY.
+  String _dateKey(String raw) {
+    final key = toVnDate(raw);
+    return key.isNotEmpty ? key : raw.trim();
   }
 
   Future<void> _loadRefs() async {
@@ -126,7 +116,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
       final grouped = <String, Map<String, List<ShiftStaffMember>>>{};
       for (final s in shifts) {
         if (s.date.trim().isEmpty) continue;
-        final key = _toIsoKey(s.date);
+        final key = _dateKey(s.date);
         final label = '${s.displayTemplate} (${s.timeLabel})';
         final staff = ShiftStaffMember(
           id: s.employeeId ?? s.id,
@@ -280,7 +270,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
 
     final reason = _reasonController.text.trim();
     final shiftLabel = '${widget.shift.shiftName} (${widget.shift.timeRange}) '
-        'ngày ${widget.date} tại ${widget.shift.branch}';
+        'ngày ${toVnDate(widget.date)} tại ${widget.shift.branch}';
     String successMsg = '';
     String reqType = 'leave';
     String title = '';
@@ -292,7 +282,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
     Map<String, dynamic> baseNotification(String type) => {
           'requestType': type,
           'shiftName': widget.shift.shiftName,
-          'shiftDate': widget.date,
+          'shiftDate': toVnDate(widget.date),
           'shiftTime': widget.shift.timeRange,
           'shiftHours': widget.shift.hours?.toString() ?? '',
           'branch': widget.shift.branch,
@@ -317,10 +307,11 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
         title = 'Nhờ làm thay: ${widget.shift.shiftName}';
         successMsg = '✅ Đã gửi lời nhờ làm thay tới ${person.displayName}!';
         targetEmployeeId = person.id;
-        notification = baseNotification('cover');
+        final coverNotif = baseNotification('cover');
+        coverNotif.remove('reason');
+        notification = coverNotif;
         content = 'Nhờ ${person.displayName} (mã ${person.id}'
-            '${person.phone.isEmpty ? '' : ', SĐT ${person.phone}'}) làm thay ca.\n'
-            'Ca: $shiftLabel.\nLý do: $reason';
+            '${person.phone.isEmpty ? '' : ', SĐT ${person.phone}'}) làm thay ca: $shiftLabel.';
         break;
       case ShiftActionType.swap:
         final staff = _selectedSwapStaff!;
@@ -335,8 +326,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
         successMsg = '✅ Đã gửi yêu cầu đổi ca tới ${staff.displayName}!';
         targetShiftId = staff.shiftId;
         targetEmployeeId = staff.id;
-        final swapDateLabel = '${_swapDate!.day.toString().padLeft(2, '0')}/'
-            '${_swapDate!.month.toString().padLeft(2, '0')}/${_swapDate!.year}';
+        final swapDateLabel = vnDate(_swapDate!);
         notification = {
           ...baseNotification('swap'),
           'swapShiftName': _selectedTargetShift ?? '',
@@ -447,19 +437,9 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Ca làm việc đang chọn',
-                                style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                shift.shiftName,
-                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                              ),
-                            ],
+                          child: Text(
+                            shift.shiftName,
+                            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                           ),
                         ),
                       ],
@@ -473,36 +453,33 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
                         Expanded(
                           child: _buildShiftBadge(
                             FontAwesomeIcons.calendarDay,
-                            'Thời gian',
-                            '${widget.dayOfWeek}, ${widget.date}/${DateTime.now().year}',
+                            '${widget.dayOfWeek}, ${toVnDate(widget.date)}',
                           ),
                         ),
                         Expanded(
                           child: _buildShiftBadge(
                             FontAwesomeIcons.clock,
-                            'Khung giờ',
                             shift.timeRange,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 8),
                     Row(
                       children: [
                         Expanded(
                           child: _buildShiftBadge(
                             FontAwesomeIcons.store,
-                            'Chi nhánh',
                             shift.branch,
                           ),
                         ),
-                        Expanded(
-                          child: _buildShiftBadge(
-                            FontAwesomeIcons.idCard,
-                            'Vị trí',
-                            shift.role,
+                        if (shift.role.isNotEmpty)
+                          Expanded(
+                            child: _buildShiftBadge(
+                              FontAwesomeIcons.idCard,
+                              shift.role,
+                            ),
                           ),
-                        ),
                       ],
                     ),
                   ],
@@ -524,9 +501,9 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
                 child: ElevatedButton.icon(
                   onPressed: _submitForm,
                   icon: const FaIcon(FontAwesomeIcons.paperPlane, size: 18),
-                  label: Text(
-                    widget.actionType == ShiftActionType.leave ? 'Gửi đơn xin nghỉ' : 'Gửi yêu cầu',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  label: const Text(
+                    'Gửi',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: color,
@@ -559,11 +536,6 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
           const Text(
             'Chọn đồng nghiệp nhận làm thay',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Chọn 1 nhân viên trong chi nhánh để nhờ họ nhận ca làm này.',
-            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
@@ -598,28 +570,6 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
               return null;
             },
           ),
-          const SizedBox(height: 20),
-          const Text(
-            'Lý do nhờ làm thay',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary),
-          ),
-          const SizedBox(height: 8),
-          TextFormField(
-            controller: _reasonController,
-            maxLines: 3,
-            decoration: InputDecoration(
-              hintText: 'Nhập lý do gửi đến đồng nghiệp (ví dụ: Bận đột xuất, cần người cover giúp...)',
-              hintStyle: const TextStyle(fontSize: 13, color: Colors.grey),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              contentPadding: const EdgeInsets.all(14),
-            ),
-            validator: (val) {
-              if (val == null || val.trim().isEmpty) {
-                return 'Vui lòng nhập lý do nhờ làm thay';
-              }
-              return null;
-            },
-          ),
         ],
       ),
     );
@@ -627,13 +577,9 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
 
   // ── Form fields: Đổi ca làm việc ──────────────────────────────────────
   Widget _buildSwapFields() {
-    final String? dateKey = _swapDate != null
-        ? '${_swapDate!.year}-${_swapDate!.month.toString().padLeft(2, '0')}-${_swapDate!.day.toString().padLeft(2, '0')}'
-        : null;
+    final String? dateKey = _swapDate != null ? vnDate(_swapDate!) : null;
 
-    final String formattedDate = _swapDate != null
-        ? '${_swapDate!.day.toString().padLeft(2, '0')}/${_swapDate!.month.toString().padLeft(2, '0')}/${_swapDate!.year}'
-        : '';
+    final String formattedDate = _swapDate != null ? vnDate(_swapDate!) : '';
 
     final Map<String, List<ShiftStaffMember>>? shiftsForDate =
         dateKey != null ? _scheduleShiftStaffData[dateKey] : null;
@@ -755,7 +701,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
               _buildEmptyAlert('Không tìm thấy ca làm việc nào trong ngày $formattedDate.')
             else
               DropdownButtonFormField<String>(
-                key: ValueKey('shift_drop_${_swapDate?.toIso8601String()}_$_selectedTargetShift'),
+                key: ValueKey('shift_drop_${_swapDate != null ? vnDate(_swapDate!) : ''}_$_selectedTargetShift'),
                 isExpanded: true,
                 initialValue: _selectedTargetShift,
                 hint: const Text('Chọn ca làm việc...'),
@@ -985,26 +931,20 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
     );
   }
 
-  Widget _buildShiftBadge(FaIconData icon, String label, String value) {
+  Widget _buildShiftBadge(FaIconData icon, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3.0),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          FaIcon(icon, size: 15, color: AppColors.textSecondary),
-          const SizedBox(width: 6),
+          FaIcon(icon, size: 14, color: AppColors.textSecondary),
+          const SizedBox(width: 8),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-                Text(
-                  value,
-                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],

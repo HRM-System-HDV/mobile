@@ -4,6 +4,7 @@ import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/utils/date_format.dart';
 import 'leave_repository.dart';
 
 class LeaveRequestItem {
@@ -178,7 +179,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
                       const FaIcon(FontAwesomeIcons.calendarDay, size: 16, color: AppColors.primary),
                       const SizedBox(width: 10),
                       Text(
-                        '${selectedDate.day.toString().padLeft(2, '0')}/${selectedDate.month.toString().padLeft(2, '0')}/${selectedDate.year}',
+                        vnDate(selectedDate),
                         style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                       ),
                       const Spacer(),
@@ -209,7 +210,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
                     );
                     return;
                   }
-                  final dateStr = '${selectedDate.day.toString().padLeft(2, '0')}/${selectedDate.month.toString().padLeft(2, '0')}/${selectedDate.year}';
+                  final dateStr = vnDate(selectedDate);
                   final user = UserScope.currentUser(context);
                   final empId = user?.id ?? '';
                   if (empId.isEmpty) {
@@ -382,7 +383,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
             const SizedBox(height: 4),
             Text('Lý do: ${item.reason}', style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
             const SizedBox(height: 6),
-            Text('Gửi lúc: ${item.createdAt}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+            Text('Gửi lúc: ${item.createdAt.trim().isEmpty || item.createdAt == '—' ? '—' : toVnDateTime(item.createdAt)}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
           ],
         ),
       ),

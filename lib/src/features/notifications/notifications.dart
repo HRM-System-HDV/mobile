@@ -4,6 +4,7 @@ import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/utils/date_format.dart';
 import 'notification_repository.dart';
 import 'request_detail.dart';
 
@@ -198,7 +199,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             id: m.id,
             title: m.title,
             content: m.body,
-            time: m.createdAt ?? 'Vừa xong',
+            time: (m.createdAt == null || m.createdAt!.trim().isEmpty)
+                ? 'Vừa xong'
+                : toVnDateTime(m.createdAt),
             icon: isReq
                 ? (requestType == 'swap'
                     ? FontAwesomeIcons.arrowsLeftRight

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/colors.dart';
+import '../../core/models/branch.dart';
 import '../../core/models/user.dart';
+import '../../core/utils/date_format.dart';
 import 'shift_repository.dart';
 
 class ShiftDetail {
@@ -79,6 +81,15 @@ class DayScheduleModel {
   });
 
   bool get isOff => shifts.isEmpty;
+
+  /// Nhãn ngắn dd/MM dùng cho ô ngày hẹp trên thanh lịch.
+  String get shortDate {
+    final d = parseVnDate(date);
+    if (d == null) return date;
+    final dd = d.day.toString().padLeft(2, '0');
+    final mm = d.month.toString().padLeft(2, '0');
+    return '$dd/$mm';
+  }
 }
 
 class ScheduleService {
@@ -378,7 +389,7 @@ class ScheduleService {
     return List.generate(7, (i) {
       final dayDate = monday.add(Duration(days: i));
       final isToday = dayDate.year == today.year && dayDate.month == today.month && dayDate.day == today.day;
-      final dateStr = '${dayDate.day.toString().padLeft(2, '0')}/${dayDate.month.toString().padLeft(2, '0')}';
+      final dateStr = vnDate(dayDate);
       final shifts = getAssignedShiftsForDate(
         dayDate,
         user: user,
@@ -397,35 +408,17 @@ class ScheduleService {
   }
 
   static bool _matchesDate(String dateStr, DateTime target) {
-    try {
-      if (dateStr.contains('-')) {
-        final parts = dateStr.split('-');
-        if (parts[0].length == 4) {
-          final y = int.parse(parts[0]);
-          final m = int.parse(parts[1]);
-          final d = int.parse(parts[2]);
-          return y == target.year && m == target.month && d == target.day;
-        } else {
-          final d = int.parse(parts[0]);
-          final m = int.parse(parts[1]);
-          final y = int.parse(parts[2]);
-          return y == target.year && m == target.month && d == target.day;
-        }
-      } else if (dateStr.contains('/')) {
-        final parts = dateStr.split('/');
-        if (parts[0].length == 4) {
-          final y = int.parse(parts[0]);
-          final m = int.parse(parts[1]);
-          final d = int.parse(parts[2]);
-          return y == target.year && m == target.month && d == target.day;
-        } else {
-          final d = int.parse(parts[0]);
-          final m = int.parse(parts[1]);
-          final y = int.parse(parts[2]);
-          return y == target.year && m == target.month && d == target.day;
-        }
-      }
-    } catch (_) {}
+    // Đọc được mọi định dạng (DD/MM/YYYY, ISO yyyy-MM-dd, dd-MM-yyyy, kèm giờ).
+    final d = parseVnDate(dateStr);
+    if (d != null) {
+      return d.year == target.year && d.month == target.month && d.day == target.day;
+    }
+    // Dữ liệu cũ chỉ có dd/MM: so khớp ngày/tháng, bỏ qua năm.
+    final legacy = RegExp(r'^(\d{1,2})[/-](\d{1,2})$').firstMatch(dateStr.trim());
+    if (legacy != null) {
+      return int.tryParse(legacy.group(1)!) == target.day &&
+          int.tryParse(legacy.group(2)!) == target.month;
+    }
     return false;
   }
 
@@ -453,7 +446,7 @@ class ScheduleService {
     return List.generate(7, (i) {
       final dayDate = monday.add(Duration(days: i));
       final isToday = dayDate.year == today.year && dayDate.month == today.month && dayDate.day == today.day;
-      final dateStr = '${dayDate.day.toString().padLeft(2, '0')}/${dayDate.month.toString().padLeft(2, '0')}';
+      final dateStr = vnDate(dayDate);
       return DayScheduleModel(
         dayOfWeek: dayNames[i],
         date: dateStr,
@@ -485,7 +478,7 @@ class ScheduleService {
     return List.generate(7, (i) {
       final dayDate = monday.add(Duration(days: i));
       final isToday = dayDate.year == today.year && dayDate.month == today.month && dayDate.day == today.day;
-      final dateStr = '${dayDate.day.toString().padLeft(2, '0')}/${dayDate.month.toString().padLeft(2, '0')}';
+      final dateStr = vnDate(dayDate);
 
       final matchingShifts = apiShifts.where((s) {
       if (!_matchesDate(s.date, dayDate)) return false;
@@ -522,13 +515,16 @@ class ScheduleService {
             );
           }
 
+          final rawBranch = s.branchSlug ?? branchName ?? '';
+          final branchDisplayName = rawBranch.isNotEmpty ? branchById(rawBranch).name : '';
+
           return ShiftDetail(
             id: s.id,
             shiftName: s.template,
             startTime: s.scheduledStart,
             endTime: s.scheduledEnd,
             hours: hours,
-            branch: s.branchSlug ?? branchName ?? '',
+            branch: branchDisplayName,
             role: s.note ?? '',
             status: status,
           );
@@ -584,13 +580,16 @@ class ScheduleService {
           endTime: s.scheduledEnd,
         );
       }
+      final rawBranch = s.branchSlug ?? branchName ?? '';
+      final branchDisplayName = rawBranch.isNotEmpty ? branchById(rawBranch).name : '';
+
       return ShiftDetail(
         id: s.id,
         shiftName: s.template,
         startTime: s.scheduledStart,
         endTime: s.scheduledEnd,
         hours: hours,
-        branch: s.branchSlug ?? branchName ?? '',
+        branch: branchDisplayName,
         role: s.note ?? '',
         status: status,
       );

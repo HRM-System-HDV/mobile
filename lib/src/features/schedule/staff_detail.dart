@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/state/user_scope.dart';
+import '../../core/utils/date_format.dart';
 import '../attendance/attendance_repository.dart';
 import '../attendance/adjustment.dart';
 import 'shift_repository.dart';
@@ -51,11 +52,9 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
       if (shift.status == 'completed') return true;
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
-      final dateParts = day.date.split('/');
-      final dayD = int.tryParse(dateParts[0]) ?? 1;
-      final monthD = dateParts.length > 1 ? (int.tryParse(dateParts[1]) ?? 1) : 1;
-      final yearD = now.year;
-      final dayDate = DateTime(yearD, monthD, dayD);
+      final parsedDay = parseVnDate(day.date);
+      if (parsedDay == null) return false;
+      final dayDate = DateTime(parsedDay.year, parsedDay.month, parsedDay.day);
       if (dayDate.isBefore(today)) return true;
       if (dayDate.isAfter(today)) return false;
 
@@ -199,46 +198,71 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header chung - đồng bộ với ShiftDetailScreen
+            // Header gọn gàng, thoáng đãng
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(18),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: Colors.grey.shade200),
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10, offset: const Offset(0, 3))],
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.03),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
-                    child: const FaIcon(FontAwesomeIcons.clock, color: AppColors.primary, size: 28),
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Center(
+                      child: FaIcon(FontAwesomeIcons.clock, color: AppColors.primary, size: 20),
+                    ),
                   ),
-                  const SizedBox(width: 14),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(shift.shiftName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-                        const SizedBox(height: 4),
-                        Text('${day.dayOfWeek}, ${day.date} • ${shift.timeRange}', style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
-                        const SizedBox(height: 6),
-                        Row(children: [
-                          CircleAvatar(radius: 12, backgroundColor: AppColors.primary.withValues(alpha: 0.12), child: Text(staff.name.split(' ').last.substring(0, 1), style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary, fontSize: 11))),
-                          const SizedBox(width: 6),
-                          Expanded(child: Text('${staff.name} • ${staff.role}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary), overflow: TextOverflow.ellipsis)),
-                        ]),
+                        Text(
+                          shift.shiftName,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          '${day.dayOfWeek}, ${toVnDate(day.date)} • ${shift.timeRange}',
+                          style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+                        ),
                       ],
                     ),
                   ),
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(color: statusColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
-                    child: Text(statusText, style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 12)),
+                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      statusText,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11.5,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -250,7 +274,7 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 4),
               decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.shade200)),
               child: Column(children: [
-                _buildInfoRow(FontAwesomeIcons.calendarDay, 'Ngày tính công', '${day.date}/${DateTime.now().year} (${day.dayOfWeek})'),
+                _buildInfoRow(FontAwesomeIcons.calendarDay, 'Ngày tính công', '${toVnDate(day.date)} (${day.dayOfWeek})'),
                 _divider(),
                 _buildInfoRow(FontAwesomeIcons.user, 'Nhân viên', staff.name),
                 _divider(),

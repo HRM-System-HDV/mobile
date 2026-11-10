@@ -1,4 +1,5 @@
 import '../../core/network/api_client.dart';
+import '../../core/utils/date_format.dart';
 import 'task_service.dart';
 
 class ApiTaskModel {
@@ -61,15 +62,8 @@ class ApiTaskModel {
       );
 
   TaskModel toTaskModel() {
-    DateTime? parsedDueDate;
-    if (dueDate != null) {
-      parsedDueDate = DateTime.tryParse(dueDate!);
-      if (parsedDueDate == null) {
-        // Hỗ trợ format YYYY-MM-DD HH:mm
-        final cleaned = dueDate!.replaceFirst(' ', 'T');
-        parsedDueDate = DateTime.tryParse(cleaned);
-      }
-    }
+    // dueDate có thể là DD/MM/YYYY HH:mm (mới) hoặc ISO (dữ liệu cũ).
+    final parsedDueDate = parseVnDate(dueDate);
 
     TaskPriority pri = TaskPriority.normal;
     if (priority == 'urgent' || priority == 'khẩn cấp') {
@@ -87,10 +81,7 @@ class ApiTaskModel {
 
     final isShift = sourceType == 'shift' || (shiftName != null && shiftName!.isNotEmpty);
 
-    DateTime? parsedCompletedAt;
-    if (completedAt != null) {
-      parsedCompletedAt = DateTime.tryParse(completedAt!);
-    }
+    final parsedCompletedAt = parseVnDate(completedAt);
 
     return TaskModel(
       id: id,
@@ -165,13 +156,13 @@ class TaskRepository {
   }
 
   Future<void> updateTaskStatus(String id, String status, {String? proofUrl, String? photoSubmittedBy}) async {
-    final nowIso = DateTime.now().toIso8601String();
+    final nowVn = vnDateTime(DateTime.now());
     await api.putJson('/api/tasks/$id', {
       'status': status,
       if (proofUrl != null) 'proofPhotoUrl': proofUrl,
       if (photoSubmittedBy != null) 'photoSubmittedBy': photoSubmittedBy,
-      if (proofUrl != null) 'photoSubmittedAt': nowIso,
-      if (status == 'completed' || status == 'done') 'completedAt': nowIso,
+      if (proofUrl != null) 'photoSubmittedAt': nowVn,
+      if (status == 'completed' || status == 'done') 'completedAt': nowVn,
     });
   }
 

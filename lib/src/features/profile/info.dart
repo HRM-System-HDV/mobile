@@ -8,6 +8,7 @@ import '../../core/services/upload_service.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/image_helper.dart';
+import '../../core/utils/date_format.dart';
 import '../auth/auth_repository.dart';
 import 'employee_repository.dart';
 
@@ -57,7 +58,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
     _nameCtrl = TextEditingController(text: widget.name);
     _phoneCtrl = TextEditingController(text: widget.phone);
     // Không tự điền mẫu — thiếu dữ liệu thì để '' và hiện hint 'Chưa cập nhật'.
-    _birthDate = widget.user?.birthDate ?? '';
+    _birthDate = toVnDate(widget.user?.birthDate);
     _gender = widget.user?.gender ?? '';
     _province = widget.user?.province ?? '';
     _ward = widget.user?.ward ?? '';
@@ -65,7 +66,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
     _bankAcc = widget.user?.bankAccountNumber ?? '';
     _bankName = widget.user?.bankName ?? '';
     _cccd = widget.user?.cccd ?? '';
-    _issueDate = widget.user?.issueDate ?? '';
+    _issueDate = toVnDate(widget.user?.issueDate);
     _issuePlace = widget.user?.issuePlace ?? '';
     _avatarUrl = widget.user?.avatarUrl;
     _cccdFrontUrl = widget.user?.cccdFrontUrl;
@@ -81,15 +82,8 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
     super.dispose();
   }
 
-  DateTime _pickerDate(String ddMmYyyy, DateTime fallback) {
-    final parts = ddMmYyyy.split('/');
-    if (parts.length != 3) return fallback;
-    final d = int.tryParse(parts[0]);
-    final m = int.tryParse(parts[1]);
-    final y = int.tryParse(parts[2]);
-    if (d == null || m == null || y == null) return fallback;
-    return DateTime(y, m, d);
-  }
+  DateTime _pickerDate(String ddMmYyyy, DateTime fallback) =>
+      parseVnDate(ddMmYyyy) ?? fallback;
 
   String _errorText(Object e) =>
       e is ApiException ? e.message : 'Không kết nối được máy chủ, vui lòng thử lại.';
@@ -166,8 +160,8 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
         'name': newName,
         'phone': newPhone,
         'cccd': newCccd,
-        'birthDate': _birthDate,
-        'issueDate': _issueDate,
+        'birthDate': toVnDate(_birthDate),
+        'issueDate': toVnDate(_issueDate),
         if (_avatarUrl != null) 'avatar': _avatarUrl,
         if (_cccdFrontUrl != null) 'cccdFront': _cccdFrontUrl,
         if (_cccdBackUrl != null) 'cccdBack': _cccdBackUrl,
@@ -198,8 +192,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: AppColors.success, content: Text('✅ Đã lưu thông tin cá nhân')));
   }
 
-  String _formatDate(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+  String _formatDate(DateTime d) => vnDate(d);
 
   Future<void> _pickBirthDate() async {
     final now = DateTime.now();
@@ -270,7 +263,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
               children: [
                 SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
                 SizedBox(width: 12),
-                Text('Đang tải ảnh lên Cloudinary...'),
+                Text('Đang tải ảnh lên máy chủ...'),
               ],
             ),
             duration: Duration(seconds: 4),
@@ -286,7 +279,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
         _showError('Không xác định được người dùng đang đăng nhập.');
         return;
       }
-      // Ảnh đã lên Cloudinary nhưng chưa gắn vào hồ sơ thì vẫn là chưa lưu.
+      // Ảnh đã lên máy chủ nhưng chưa gắn vào hồ sơ thì vẫn là chưa lưu.
       await EmployeeRepository().updateEmployee(current.id, {field: url});
       if (!mounted) return;
       onUploaded(url);
@@ -383,7 +376,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
           _card(children: [
             _editableRow('Họ và tên', _nameCtrl, FontAwesomeIcons.user, enabled: _isEditing),
             _divider(),
-            _row('Ngày sinh', _birthDate, FontAwesomeIcons.cakeCandles, onTap: _isEditing ? _pickBirthDate : null),
+            _row('Ngày sinh', toVnDate(_birthDate), FontAwesomeIcons.cakeCandles, onTap: _isEditing ? _pickBirthDate : null),
             _divider(),
             _row('Giới tính', _gender, FontAwesomeIcons.restroom),
             _divider(),
@@ -412,7 +405,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
           _card(children: [
             _editableRow('Số CCCD', _cccdCtrl, FontAwesomeIcons.idCard, enabled: _isEditing),
             _divider(),
-            _row('Ngày cấp', _issueDate, FontAwesomeIcons.calendarDays, onTap: _isEditing ? _pickIssueDate : null),
+            _row('Ngày cấp', toVnDate(_issueDate), FontAwesomeIcons.calendarDays, onTap: _isEditing ? _pickIssueDate : null),
             _divider(),
             _row('Nơi cấp', _issuePlace, FontAwesomeIcons.locationDot),
             _divider(),
@@ -480,7 +473,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
         child: Row(children: [
           FaIcon(icon, size: 18, color: AppColors.textSecondary),
           const SizedBox(width: 10),
-          SizedBox(width: 110, child: Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600))),
+          SizedBox(width: 120, child: Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600))),
           Expanded(child: enabled ? TextField(controller: ctrl, textAlign: TextAlign.right, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold), decoration: const InputDecoration(isDense: true, border: InputBorder.none, contentPadding: EdgeInsets.zero)) : Text(ctrl.text, textAlign: TextAlign.right, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
         ]),
       );

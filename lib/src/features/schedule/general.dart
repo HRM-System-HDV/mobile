@@ -6,6 +6,7 @@ import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../../core/widgets/week_strip.dart';
+import '../../core/utils/date_format.dart';
 import '../attendance/attendance_repository.dart';
 import 'shift_repository.dart';
 import '../profile/employee_repository.dart';
@@ -146,17 +147,18 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
 
   bool _matchesDate(String dateStr, DateTime target) {
     if (dateStr.isEmpty) return false;
-    final clean = dateStr.trim();
-    if (RegExp(r'^\d{4}-\d{2}-\d{2}').hasMatch(clean)) {
-      final y = target.year.toString().padLeft(4, '0');
-      final m = target.month.toString().padLeft(2, '0');
-      final d = target.day.toString().padLeft(2, '0');
-      return clean.startsWith('$y-$m-$d');
+    // Đọc được mọi định dạng (DD/MM/YYYY, ISO yyyy-MM-dd, dd-MM-yyyy, kèm giờ).
+    final d = parseVnDate(dateStr);
+    if (d != null) {
+      return d.year == target.year && d.month == target.month && d.day == target.day;
     }
-    final d = target.day.toString().padLeft(2, '0');
-    final m = target.month.toString().padLeft(2, '0');
-    final y = target.year.toString().padLeft(4, '0');
-    return clean.startsWith('$d/$m/$y') || clean.startsWith('$d-$m-$y') || clean.startsWith('$d/$m') || clean.startsWith('$d-$m');
+    // Dữ liệu cũ chỉ có dd/MM: so ngày/tháng, bỏ qua năm.
+    final legacy = RegExp(r'^(\d{1,2})[/-](\d{1,2})$').firstMatch(dateStr.trim());
+    if (legacy != null) {
+      return int.tryParse(legacy.group(1)!) == target.day &&
+          int.tryParse(legacy.group(2)!) == target.month;
+    }
+    return false;
   }
 
   DateTime _getMonday(DateTime date) {
@@ -174,9 +176,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
   String _getWeekRange(int offset) {
     final monday = _thisWeekMonday.add(Duration(days: offset * 7));
     final sunday = monday.add(const Duration(days: 6));
-    final monStr = '${monday.day.toString().padLeft(2, '0')}/${monday.month.toString().padLeft(2, '0')}';
-    final sunStr = '${sunday.day.toString().padLeft(2, '0')}/${sunday.month.toString().padLeft(2, '0')}';
-    return '$monStr - $sunStr';
+    return '${vnDate(monday)} - ${vnDate(sunday)}';
   }
 
   String _calcShiftStatus(DateTime dayDate, String startTime, String endTime) {
@@ -230,7 +230,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
       final dayDate = monday.add(Duration(days: i));
       final isToday = dayDate.year == _today.year && dayDate.month == _today.month && dayDate.day == _today.day;
       final isPast = dayDate.isBefore(_today);
-      final dateStr = '${dayDate.day.toString().padLeft(2, '0')}/${dayDate.month.toString().padLeft(2, '0')}';
+      final dateStr = vnDate(dayDate);
 
       final shiftsForDay = _apiShifts.where((s) => _matchesDate(s.date, dayDate)).toList();
       final dayShifts = <GeneralShiftModel>[];
@@ -378,18 +378,8 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
           icon: const FaIcon(FontAwesomeIcons.chevronLeft, size: 20, color: AppColors.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
-        actions: [
-          IconButton(
-            icon: const FaIcon(FontAwesomeIcons.calendarDay, color: AppColors.primary),
-            tooltip: 'Về hôm nay',
-            onPressed: () {
-              setState(() {
-                _weekOffset = 0; // Tuần này
-                _selectedDayIndex = (_today.weekday - 1).clamp(0, 6);
-              });
-            },
-          ),
-          const BranchSelector(includeAll: true),
+        actions: const [
+          BranchSelector(includeAll: true),
         ],
       ),
       body: Column(
@@ -401,7 +391,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
               final day = weekDays[index];
               return {
                 'label': day.dayOfWeek,
-                'day': int.tryParse(day.date.split('/')[0]) ?? 0,
+                'day': parseVnDate(day.date)?.day ?? 0,
                 'isToday': day.isToday,
                 'dotColor': day.isToday ? AppColors.primary : Colors.grey.shade300,
               };
@@ -449,7 +439,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
                     Row(
                       children: [
                         Text(
-                          '${selectedDay.dayOfWeek}, Ngày ${selectedDay.date}/${DateTime.now().year}',
+                          '${selectedDay.dayOfWeek}, Ngày ${toVnDate(selectedDay.date)}',
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
@@ -702,11 +692,9 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
       if (shift.status == 'completed') return true;
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
-      final dateParts = day.date.split('/');
-      final dayD = int.tryParse(dateParts[0]) ?? 1;
-      final monthD = dateParts.length > 1 ? (int.tryParse(dateParts[1]) ?? 1) : 1;
-      final yearD = now.year;
-      final dayDate = DateTime(yearD, monthD, dayD);
+      final parsedDay = parseVnDate(day.date);
+      if (parsedDay == null) return false;
+      final dayDate = DateTime(parsedDay.year, parsedDay.month, parsedDay.day);
       if (dayDate.isBefore(today)) return true;
       if (dayDate.isAfter(today)) return false;
 
