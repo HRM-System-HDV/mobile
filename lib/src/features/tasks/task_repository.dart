@@ -83,10 +83,14 @@ class ApiTaskModel {
 
     final parsedCompletedAt = parseVnDate(completedAt);
 
+    final desc = (description == null || description!.trim().isEmpty)
+        ? 'Không có hướng dẫn'
+        : description!.trim();
+
     return TaskModel(
       id: id,
       title: title,
-      description: description ?? '',
+      description: desc,
       sourceType: isShift ? TaskSourceType.shift : TaskSourceType.manager,
       assignedByName: assignedByName ?? '—',
       shiftName: shiftName,

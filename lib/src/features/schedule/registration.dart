@@ -318,7 +318,7 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        backgroundColor: const Color(0xFF1E293B),
+        backgroundColor: AppColors.textDark,
         behavior: SnackBarBehavior.floating,
         margin: const EdgeInsets.all(16),
         duration: const Duration(milliseconds: 1200),

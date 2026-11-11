@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
+import '../../core/services/notification_service.dart';
 import '../../core/state/user_scope.dart';
 import '../notifications/notification_repository.dart';
 
@@ -94,6 +95,9 @@ class _NotificationSettingsScreenState extends State<NotificationSettingsScreen>
       return;
     }
     if (!mounted) return;
+    NotificationSettingsCache.setLocal(key, value);
+    // Áp dụng ngay: lên lịch lại nhắc ca / đổi kênh âm thanh-rung.
+    ShiftReminders.reschedule(employeeId: UserScope.currentUser(context)?.id);
     _showSavedToast(label, value);
   }
 

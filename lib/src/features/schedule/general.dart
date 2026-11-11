@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/branch_scope.dart';
@@ -10,7 +11,6 @@ import '../../core/utils/date_format.dart';
 import '../attendance/attendance_repository.dart';
 import 'shift_repository.dart';
 import '../profile/employee_repository.dart';
-import 'staff_detail.dart';
 
 class StaffInShift {
   final String id;
@@ -641,12 +641,12 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
 
           // Phần xổ xuống: Danh sách các nhân viên trong ca
           if (isExpanded) ...[
-            const Divider(height: 1, thickness: 1, color: Color(0xFFF1F5F9)),
+            const Divider(height: 1, thickness: 1, color: AppColors.border),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
               decoration: const BoxDecoration(
-                color: Color(0xFFF8FAFC),
+                color: AppColors.surfaceSubtle,
                 borderRadius: BorderRadius.vertical(bottom: Radius.circular(15)),
               ),
               child: shift.staffList.isEmpty
@@ -765,7 +765,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
                         ),
                       ],
                     ),
-                    backgroundColor: const Color(0xFF334155),
+                    backgroundColor: AppColors.textDark,
                     behavior: SnackBarBehavior.floating,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     duration: const Duration(seconds: 2),
@@ -902,7 +902,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
               ),
             ],
           ),
-          backgroundColor: const Color(0xFF334155),
+          backgroundColor: AppColors.textDark,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           duration: const Duration(seconds: 2),
@@ -911,16 +911,11 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
       return;
     }
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => StaffGeneralShiftDetailScreen(
-          staff: staff,
-          shift: shift,
-          day: day,
-          gracePeriodMinutes: _gracePeriodMinutes,
-        ),
-      ),
-    );
+    context.push('/schedule/staff-detail', extra: {
+      'staff': staff,
+      'shift': shift,
+      'day': day,
+      'gracePeriodMinutes': _gracePeriodMinutes,
+    });
   }
 }

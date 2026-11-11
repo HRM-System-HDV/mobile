@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
+import '../../core/services/notification_service.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
@@ -100,6 +104,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   late List<NotificationItem> _notifications;
   String? _loadedUserId;
   String? _loadError;
+  Timer? _pollTimer;
+  final Set<String> _knownIds = {};
+  bool _firstLoadDone = false;
 
   @override
   void initState() {
@@ -107,6 +114,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     // Chỉ dùng API thật; khởi rỗng để hiện empty state khi API chưa về/rỗng.
     _notifications = [];
     _syncUnreadCount();
+    // Quét thông báo mới định kỳ để bắn cảnh báo local (âm thanh/rung theo cài đặt).
+    _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) _fetchNotifications();
+    });
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -115,6 +132,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final uid = UserScope.currentUser(context)?.id ?? '';
     if (_loadedUserId != uid) {
       _loadedUserId = uid;
+      _firstLoadDone = false;
+      _knownIds.clear();
+      NotificationSettingsCache.refresh(userId: uid.isEmpty ? null : uid);
       _fetchNotifications();
     }
   }
@@ -137,35 +157,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     try {
       final employeeId = _employeeId;
       final list = await _repo.getNotifications(employeeId: employeeId);
-      // Đọc raw để giữ các trường mở rộng (requestType/sender/shift*) nếu API có.
-      Map<String, Map<String, dynamic>> rawById = {};
-      try {
-        final raw = await _repo.api.getJson('/api/notifications', query: {
-          if (employeeId != null) 'employeeId': employeeId,
-        });
-        if (raw is List) {
-          for (final e in raw.whereType<Map>()) {
-            final m = e.cast<String, dynamic>();
-            final id = m['id']?.toString() ?? '';
-            if (id.isNotEmpty) rawById[id] = m;
-          }
-        }
-      } catch (_) {}
       if (mounted) {
         final remoteItems = list.map((m) {
-          final raw = rawById[m.id] ?? const <String, dynamic>{};
-          final meta = raw['metadata'];
-          final Map<String, dynamic> metaMap =
-              meta is Map ? meta.cast<String, dynamic>() : const <String, dynamic>{};
+          final metaMap = m.metadata ?? const <String, dynamic>{};
 
           // Chỉ nhận loại yêu cầu do backend gắn tường minh. Không suy đoán từ
           // title/body: thông báo duyệt đơn cũng chứa chữ "làm thay/đổi ca" nên
           // suy đoán sẽ biến chúng thành thẻ phản hồi ca sai.
-          String? requestType = _rawString({...raw, ...metaMap}, [
-            'requestType',
-            'request_type',
-            'shiftRequestType',
-          ]);
+          String? requestType = m.requestType ??
+              _rawString(metaMap, [
+                'requestType',
+                'request_type',
+                'shiftRequestType',
+              ]);
           if (requestType != null) {
             final v = requestType.toLowerCase();
             if (v.contains('swap')) {
@@ -179,9 +183,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
           // id đơn từ thật nằm trong metadata; thiếu nó thì không mở màn phản hồi.
           final String? requestId =
-              _rawString({...raw, ...metaMap}, ['requestId', 'request_id']);
+              _rawString(metaMap, ['requestId', 'request_id']);
           final String? statusRaw = _rawString(
-            {...raw, ...metaMap},
+            metaMap,
             ['requestStatus', 'request_status'],
           )?.toLowerCase();
           ShiftRequestStatus requestStatus = ShiftRequestStatus.pending;
@@ -214,22 +218,22 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             requestId: requestId,
             requestStatus: requestStatus,
             requestType: requestType,
-            senderName: _rawString({...raw, ...metaMap}, ['senderName', 'sender', 'employeeName']),
-            senderRole: _rawString({...raw, ...metaMap}, ['senderRole', 'role']),
-            senderPhone: _rawString({...raw, ...metaMap}, ['senderPhone', 'phone']),
-            shiftName: _rawString({...raw, ...metaMap}, ['shiftName', 'shift']),
-            shiftTime: _rawString({...raw, ...metaMap}, ['shiftTime', 'time']),
-            shiftHours: _rawString({...raw, ...metaMap}, ['shiftHours', 'hours']),
-            shiftDate: _rawString({...raw, ...metaMap}, ['shiftDate', 'date']),
-            branch: _rawString({...raw, ...metaMap}, ['branch', 'branchSlug']),
-            shiftRole: _rawString({...raw, ...metaMap}, ['shiftRole']),
-            swapShiftName: _rawString({...raw, ...metaMap}, ['swapShiftName']),
-            swapShiftTime: _rawString({...raw, ...metaMap}, ['swapShiftTime']),
-            swapShiftHours: _rawString({...raw, ...metaMap}, ['swapShiftHours']),
-            swapShiftDate: _rawString({...raw, ...metaMap}, ['swapShiftDate']),
-            swapShiftBranch: _rawString({...raw, ...metaMap}, ['swapShiftBranch']),
-            swapShiftRole: _rawString({...raw, ...metaMap}, ['swapShiftRole']),
-            reason: _rawString({...raw, ...metaMap}, ['reason']) ?? m.body,
+            senderName: m.senderName ?? _rawString(metaMap, ['senderName', 'sender', 'employeeName']),
+            senderRole: m.senderRole ?? _rawString(metaMap, ['senderRole', 'role']),
+            senderPhone: m.senderPhone ?? _rawString(metaMap, ['senderPhone', 'phone']),
+            shiftName: m.shiftName ?? _rawString(metaMap, ['shiftName', 'shift']),
+            shiftTime: m.shiftTime ?? _rawString(metaMap, ['shiftTime', 'time']),
+            shiftHours: m.shiftHours ?? _rawString(metaMap, ['shiftHours', 'hours']),
+            shiftDate: m.shiftDate ?? _rawString(metaMap, ['shiftDate', 'date']),
+            branch: m.branchSlug ?? _rawString(metaMap, ['branch', 'branchSlug']),
+            shiftRole: _rawString(metaMap, ['shiftRole']),
+            swapShiftName: _rawString(metaMap, ['swapShiftName']),
+            swapShiftTime: _rawString(metaMap, ['swapShiftTime']),
+            swapShiftHours: _rawString(metaMap, ['swapShiftHours']),
+            swapShiftDate: _rawString(metaMap, ['swapShiftDate']),
+            swapShiftBranch: _rawString(metaMap, ['swapShiftBranch']),
+            swapShiftRole: _rawString(metaMap, ['swapShiftRole']),
+            reason: _rawString(metaMap, ['reason']) ?? m.body,
           );
         }).toList();
         setState(() {
@@ -237,6 +241,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           _loadError = null;
         });
         _syncUnreadCount();
+        _alertNewItems(remoteItems);
       }
     } catch (e) {
       // Không hiện "đã dọn sạch" khi thực chất là gọi API thất bại.
@@ -247,6 +252,31 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   void _syncUnreadCount() {
     final count = _notifications.where((n) => !n.isRead).length;
     NotificationState.updateCount(count);
+  }
+
+  /// Lần tải đầu chỉ ghi nhận danh sách; các lần sau bắn cảnh báo local cho
+  /// thông báo chưa đọc mới xuất hiện, theo đúng cài đặt người dùng.
+  void _alertNewItems(List<NotificationItem> items) {
+    final fresh = items.where((n) => !n.isRead && !_knownIds.contains(n.id)).toList();
+    _knownIds
+      ..clear()
+      ..addAll(items.map((n) => n.id));
+    if (!_firstLoadDone) {
+      _firstLoadDone = true;
+      return;
+    }
+    if (fresh.isEmpty || !NotificationSettingsCache.get('tabNotificationAlert')) return;
+    final sound = NotificationSettingsCache.get('soundEnabled');
+    final vibrate = NotificationSettingsCache.get('vibrateEnabled');
+    for (final item in fresh.take(3)) {
+      LocalNotifier.instance.show(
+        item.id.hashCode.abs() % 100000,
+        item.title,
+        item.content,
+        sound: sound,
+        vibrate: vibrate,
+      );
+    }
   }
 
   // ── Actions ─────────────────────────────────────────────────────────────────
@@ -452,38 +482,36 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
     if (!mounted) return;
 
-    final result = await Navigator.push<ShiftRequestStatus>(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ShiftRequestDetailScreen(
-          requestId: requestId,
-          title: item.title,
-          senderName: item.senderName ?? '—',
-          senderRole: item.senderRole ?? '',
-          senderPhone: item.senderPhone ?? '',
-          requestType: item.requestType ?? 'cover',
-          requestTime: item.time,
-          shiftName: item.shiftName ?? '—',
-          shiftTime: item.shiftTime ?? '—',
-          shiftHours: item.shiftHours ?? '',
-          shiftDate: item.shiftDate ?? '—',
-          branch: item.branch ?? BranchScope.label(context),
-          shiftRole: item.shiftRole ?? '',
-          swapShiftName: item.swapShiftName,
-          swapShiftTime: item.swapShiftTime,
-          swapShiftHours: item.swapShiftHours,
-          swapShiftDate: item.swapShiftDate,
-          swapShiftBranch: item.swapShiftBranch,
-          swapShiftRole: item.swapShiftRole,
-          reason: item.reason ?? item.content,
-          initialStatus: item.requestStatus,
-          onStatusChanged: (newStatus) {
-            setState(() {
-              item.requestStatus = newStatus;
-            });
-          },
-        ),
-      ),
+    final result = await context.push<ShiftRequestStatus>(
+      '/notifications/detail',
+      extra: {
+        'requestId': requestId,
+        'title': item.title,
+        'senderName': item.senderName ?? '—',
+        'senderRole': item.senderRole ?? '',
+        'senderPhone': item.senderPhone ?? '',
+        'requestType': item.requestType ?? 'cover',
+        'requestTime': item.time,
+        'shiftName': item.shiftName ?? '—',
+        'shiftTime': item.shiftTime ?? '—',
+        'shiftHours': item.shiftHours ?? '',
+        'shiftDate': item.shiftDate ?? '—',
+        'branch': item.branch ?? BranchScope.label(context),
+        'shiftRole': item.shiftRole ?? '',
+        'swapShiftName': item.swapShiftName,
+        'swapShiftTime': item.swapShiftTime,
+        'swapShiftHours': item.swapShiftHours,
+        'swapShiftDate': item.swapShiftDate,
+        'swapShiftBranch': item.swapShiftBranch,
+        'swapShiftRole': item.swapShiftRole,
+        'reason': item.reason ?? item.content,
+        'initialStatus': item.requestStatus,
+        'onStatusChanged': (ShiftRequestStatus newStatus) {
+          setState(() {
+            item.requestStatus = newStatus;
+          });
+        },
+      },
     );
 
     if (result != null) {
@@ -928,7 +956,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       style: TextStyle(
                         fontSize: 12.5,
                         height: 1.35,
-                        color: item.isRead ? AppColors.textSecondary : const Color(0xFF333333),
+                        color: item.isRead ? AppColors.textSecondary : AppColors.textPrimary,
                       ),
                     ),
 

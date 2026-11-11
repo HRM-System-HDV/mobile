@@ -1,22 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../../core/models/user.dart';
-import '../schedule/general.dart';
-import '../salary/salary.dart';
-import 'monitor.dart';
-import '../approvals/approvals.dart';
-import '../wifi_config/wifi.dart';
-import '../leave_request/leave.dart';
-import '../schedule/registration.dart';
-import '../attendance/adjustment.dart';
-import '../salary/advance.dart';
-import '../news/news.dart';
-import '../regulations/regulations.dart';
-import '../home/help.dart';
-import '../schedule/assignment.dart';
-import 'tasks.dart';
 
 class OperationsScreen extends StatelessWidget {
   final UserModel currentUser;
@@ -69,10 +56,7 @@ class OperationsScreen extends StatelessWidget {
               badgeText: isAdmin ? 'Toàn hệ thống' : 'Chi nhánh',
               badgeColor: Colors.indigo,
               onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const StaffMonitorScreen()),
-                );
+                context.push('/tasks/monitor');
               },
             ),
             _buildFeatureCard(
@@ -82,10 +66,7 @@ class OperationsScreen extends StatelessWidget {
               badgeText: 'Chờ duyệt',
               badgeColor: Colors.orange.shade800,
               onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const ShiftRequestScreen()),
-                );
+                context.push('/approvals');
               },
             ),
             _buildFeatureCard(
@@ -95,10 +76,7 @@ class OperationsScreen extends StatelessWidget {
               badgeText: 'Xếp ca',
               badgeColor: AppColors.primary,
               onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => ShiftAssignmentScreen(currentUser: currentUser)),
-                );
+                context.push('/schedule/assignment', extra: currentUser);
               },
             ),
             _buildFeatureCard(
@@ -108,10 +86,7 @@ class OperationsScreen extends StatelessWidget {
               badgeText: 'Giao việc',
               badgeColor: AppColors.primary,
               onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => TaskListScreen(currentUser: currentUser)),
-                );
+                context.push('/tasks', extra: currentUser);
               },
             ),
             _buildFeatureCard(
@@ -121,10 +96,7 @@ class OperationsScreen extends StatelessWidget {
               badgeText: 'Wi-Fi Check',
               badgeColor: Colors.teal.shade700,
               onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const WifiConfigScreen()),
-                );
+                context.push('/wifi');
               },
             ),
             const SizedBox(height: 14),
@@ -134,7 +106,7 @@ class OperationsScreen extends StatelessWidget {
           _buildSubGroupLabel(
             'Lịch làm việc',
             FontAwesomeIcons.calendarDays,
-            const Color(0xFF1976D2),
+            AppColors.infoBlue,
           ),
           _buildFeatureCard(
             title: 'Lịch làm việc chung',
@@ -143,23 +115,17 @@ class OperationsScreen extends StatelessWidget {
             badgeText: 'Chi nhánh',
             badgeColor: Colors.blue,
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const GeneralScheduleScreen()),
-              );
+              context.push('/schedule/general');
             },
           ),
           _buildFeatureCard(
             title: 'Đăng ký ca làm việc',
             icon: FontAwesomeIcons.calendarPlus,
-            iconColor: const Color(0xFF1A73E8),
+            iconColor: AppColors.infoBlue,
             badgeText: 'Tuần tới',
-            badgeColor: const Color(0xFF1A73E8),
+            badgeColor: AppColors.infoBlue,
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ScheduleRegistrationScreen()),
-              );
+              context.push('/schedule/registration');
             },
           ),
           _buildFeatureCard(
@@ -169,23 +135,17 @@ class OperationsScreen extends StatelessWidget {
             badgeText: 'Phép năm',
             badgeColor: Colors.orange,
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const LeaveRequestScreen()),
-              );
+              context.push('/leave');
             },
           ),
           _buildFeatureCard(
             title: 'Giao việc & Nhiệm vụ',
             icon: FontAwesomeIcons.listCheck,
-            iconColor: const Color(0xFF2563EB),
+            iconColor: AppColors.infoBlue,
             badgeText: 'Việc của tôi',
-            badgeColor: const Color(0xFF2563EB),
+            badgeColor: AppColors.infoBlue,
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => TaskListScreen(currentUser: currentUser)),
-              );
+              context.push('/tasks', extra: currentUser);
             },
           ),
           const SizedBox(height: 14),
@@ -194,7 +154,7 @@ class OperationsScreen extends StatelessWidget {
           _buildSubGroupLabel(
             'Chấm công',
             FontAwesomeIcons.clock,
-            const Color(0xFF00897B),
+            AppColors.successDark,
           ),
           _buildFeatureCard(
             title: 'Bổ sung / sửa chấm công',
@@ -203,10 +163,7 @@ class OperationsScreen extends StatelessWidget {
             badgeText: 'Bù công',
             badgeColor: Colors.teal,
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AttendanceAdjustmentScreen()),
-              );
+              context.push('/attendance/adjustment');
             },
           ),
           const SizedBox(height: 14),
@@ -215,34 +172,28 @@ class OperationsScreen extends StatelessWidget {
           _buildSubGroupLabel(
             'Lương',
             FontAwesomeIcons.moneyBill,
-            const Color(0xFF2E7D32),
+            AppColors.successDark,
           ),
           _buildFeatureCard(
             title: isAdmin
                 ? 'Phiếu lương toàn công ty'
                 : (canManage ? 'Bảng công & Lương chi nhánh' : 'Kỳ lương & Phiếu lương cá nhân'),
             icon: FontAwesomeIcons.receipt,
-            iconColor: const Color(0xFF2E7D32),
+            iconColor: AppColors.successDark,
             badgeText: 'Phiếu lương',
-            badgeColor: const Color(0xFF2E7D32),
+            badgeColor: AppColors.successDark,
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SalaryScreen()),
-              );
+              context.push('/salary');
             },
           ),
           _buildFeatureCard(
             title: 'Tạm ứng lương',
             icon: FontAwesomeIcons.wallet,
-            iconColor: const Color(0xFFFB8C00),
+            iconColor: AppColors.warningDark,
             badgeText: 'Tạm ứng',
-            badgeColor: const Color(0xFFFB8C00),
+            badgeColor: AppColors.warningDark,
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SalaryAdvanceScreen()),
-              );
+              context.push('/salary/advance');
             },
           ),
           const SizedBox(height: 14),
@@ -251,7 +202,7 @@ class OperationsScreen extends StatelessWidget {
           _buildSubGroupLabel(
             'Truyền thông',
             FontAwesomeIcons.bullhorn,
-            const Color(0xFFE53935),
+            AppColors.error,
           ),
           _buildFeatureCard(
             title: 'Bảng tin & Thông báo',
@@ -260,23 +211,17 @@ class OperationsScreen extends StatelessWidget {
             badgeText: 'Bản tin',
             badgeColor: Colors.blueGrey,
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => NewsScreen(currentUser: currentUser)),
-              );
+              context.push('/news', extra: currentUser);
             },
           ),
           _buildFeatureCard(
             title: 'Nội quy & Quy định',
             icon: FontAwesomeIcons.gavel,
-            iconColor: const Color(0xFF6A1B9A),
+            iconColor: AppColors.primary,
             badgeText: 'Nội quy',
-            badgeColor: const Color(0xFF6A1B9A),
+            badgeColor: AppColors.primary,
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => CompanyRegulationsScreen(currentUser: currentUser)),
-              );
+              context.push('/regulations', extra: currentUser);
             },
           ),
           const SizedBox(height: 14),
@@ -285,19 +230,16 @@ class OperationsScreen extends StatelessWidget {
           _buildSubGroupLabel(
             'Hướng dẫn',
             FontAwesomeIcons.circleQuestion,
-            const Color(0xFF0288D1),
+            AppColors.info,
           ),
           _buildFeatureCard(
             title: 'Câu hỏi thường gặp & Trợ giúp',
             icon: FontAwesomeIcons.circleQuestion,
-            iconColor: const Color(0xFF0288D1),
+            iconColor: AppColors.info,
             badgeText: 'FAQ',
-            badgeColor: const Color(0xFF0288D1),
+            badgeColor: AppColors.info,
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const FaqHelpScreen()),
-              );
+              context.push('/help');
             },
           ),
           const SizedBox(height: 30),

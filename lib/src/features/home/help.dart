@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 
 class FaqItem {
@@ -58,35 +57,6 @@ class FaqHelpScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: const Row(
-              children: [
-                CircleAvatar(
-                  radius: 22,
-                  backgroundColor: Color(0xFFEFF6FF),
-                  child: FaIcon(FontAwesomeIcons.headset, color: Color(0xFF2563EB), size: 24),
-                ),
-                SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Trung tâm trợ giúp HRM', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                      SizedBox(height: 2),
-                      Text('Tổng hợp các giải đáp nhanh về vận hành, chấm công và quyền lợi nhân sự.', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
           const Text('Các câu hỏi phổ biến', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
           const SizedBox(height: 10),
 

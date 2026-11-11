@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
 import '../attendance/attendance_repository.dart';
-import '../attendance/adjustment.dart';
 import 'shift_repository.dart';
 import 'general.dart';
 
@@ -329,10 +329,7 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
                     icon: FontAwesomeIcons.calendarPlus,
                     color: Colors.orange.shade700,
                     bgColor: Colors.orange.shade50,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const AttendanceAdjustmentScreen()),
-                    ),
+                    onTap: () => context.push('/attendance/adjustment'),
                   ),
                 ],
               ],
@@ -345,10 +342,7 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
                 icon: FontAwesomeIcons.calendarPlus,
                 color: Colors.orange.shade700,
                 bgColor: Colors.orange.shade50,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AttendanceAdjustmentScreen()),
-                ),
+                onTap: () => context.push('/attendance/adjustment'),
               ),
             ],
             if (isOwnShift && isCheckedIn && !isLate && !canManage) ...[

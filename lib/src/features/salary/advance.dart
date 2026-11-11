@@ -264,14 +264,14 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFF047857), Color(0xFF059669)],
+                colors: [AppColors.successDark, AppColors.successGreen],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF047857).withValues(alpha: 0.3),
+                  color: AppColors.successDark.withValues(alpha: 0.3),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),
@@ -362,7 +362,7 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(rec.amount, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF047857))),
+                Text(rec.amount, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.successDark)),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),

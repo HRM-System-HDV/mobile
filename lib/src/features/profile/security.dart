@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
-import 'password.dart';
-import 'devices.dart';
 
 class SecurityScreen extends StatelessWidget {
   const SecurityScreen({super.key});
@@ -39,9 +38,7 @@ class SecurityScreen extends StatelessWidget {
                   // Mục 1: Thiết bị đã đăng nhập
                   InkWell(
                     onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(builder: (context) => const LoggedInDevicesScreen()),
-                      );
+                      context.push('/profile/devices');
                     },
                     child: const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -75,9 +72,7 @@ class SecurityScreen extends StatelessWidget {
                   // Mục 2: Đổi mật khẩu
                   InkWell(
                     onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(builder: (context) => const ChangePasswordScreen()),
-                      );
+                      context.push('/profile/password');
                     },
                     child: const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),

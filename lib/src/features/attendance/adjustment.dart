@@ -327,18 +327,18 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFFF0FDF4),
+                color: AppColors.successBg,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFBBF7D0)),
+                border: Border.all(color: AppColors.successGreen),
               ),
               child: const Row(
                 children: [
-                  FaIcon(FontAwesomeIcons.circleCheck, color: Color(0xFF16A34A), size: 22),
+                  FaIcon(FontAwesomeIcons.circleCheck, color: AppColors.success, size: 22),
                   SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       'Đơn giải trình hợp lệ sẽ được Quản lý chi nhánh duyệt và cập nhật công ca vào bảng lương tháng.',
-                      style: TextStyle(fontSize: 12.5, color: Color(0xFF15803D), height: 1.3),
+                      style: TextStyle(fontSize: 12.5, color: AppColors.successDark, height: 1.3),
                     ),
                   ),
                 ],

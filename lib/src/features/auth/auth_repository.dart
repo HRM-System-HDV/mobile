@@ -60,6 +60,7 @@ class AuthRepository {
       api.setSession(
         accessToken: data['accessToken']?.toString(),
         refreshToken: data['refreshToken']?.toString(),
+        deviceSessionId: data['deviceSessionId']?.toString(),
       );
     }
     await ApiClient.persistSession(remember: rememberMe);
@@ -139,7 +140,10 @@ class AuthRepository {
 
   Future<void> logout() async {
     try {
-      await api.postJson('/api/auth/logout', {});
+      // Gửi refresh token để backend thu hồi phiên thật, không chỉ xóa cookie.
+      await api.postJson('/api/auth/logout', {
+        'refreshToken': ApiClient.currentRefreshToken ?? '',
+      });
     } on ApiException {
       // Mất mạng vẫn cho đăng xuất cục bộ để không kẹt phiên.
     }

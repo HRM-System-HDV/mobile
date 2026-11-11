@@ -7,10 +7,7 @@ import '../../core/state/user_scope.dart';
 import '../../core/models/user.dart';
 import '../../core/utils/image_helper.dart';
 import 'employee_repository.dart';
-import 'info.dart';
 import '../auth/auth_repository.dart';
-import 'notif_settings.dart';
-import 'security.dart';
 
 class ProfileScreen extends StatefulWidget {
   final UserModel currentUser;
@@ -85,18 +82,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         children: [
           // Header Profile
           InkWell(
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => PersonalInfoScreen(
-                  name: me.name,
-                  email: me.email,
-                  phone: phone,
-                  isManager: canManage,
-                  user: me,
-                ),
-              ),
-            ),
+            onTap: () => context.push('/profile/info', extra: {
+              'name': me.name,
+              'email': me.email,
+              'phone': phone,
+              'isManager': canManage,
+              'user': me,
+            }),
             borderRadius: BorderRadius.circular(16),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
@@ -153,9 +145,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               child: Column(
                 children: [
-                  _buildProfileMenuItem(icon: FontAwesomeIcons.shieldHalved, title: 'Bảo mật', subtitle: 'Danh sách thiết bị đăng nhập, đổi mật khẩu', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SecurityScreen()))),
+                  _buildProfileMenuItem(icon: FontAwesomeIcons.shieldHalved, title: 'Bảo mật', subtitle: 'Danh sách thiết bị đăng nhập, đổi mật khẩu', onTap: () => context.push('/profile/security')),
                   const Divider(height: 1),
-                  _buildProfileMenuItem(icon: FontAwesomeIcons.bell, title: 'Cài đặt thông báo', subtitle: 'Tắt/bật các thông báo cần thiết', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationSettingsScreen()))),
+                  _buildProfileMenuItem(icon: FontAwesomeIcons.bell, title: 'Cài đặt thông báo', subtitle: 'Tắt/bật các thông báo cần thiết', onTap: () => context.push('/profile/notifications')),
                   const Divider(height: 1),
                   InkWell(
                     onTap: () async {

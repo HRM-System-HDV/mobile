@@ -259,7 +259,7 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
-                child: const Text('Gửi đơn xin nghỉ', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                child: const Text('Gửi', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
               ),
             ],
           ),

@@ -314,14 +314,14 @@ class _SalaryScreenState extends State<SalaryScreen> {
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFF10B981), Color(0xFF059669)],
+                  colors: [AppColors.successGreen, AppColors.successDark],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF10B981).withValues(alpha: 0.3),
+                    color: AppColors.successGreen.withValues(alpha: 0.3),
                     blurRadius: 12,
                     offset: const Offset(0, 4),
                   ),
@@ -380,6 +380,8 @@ class _SalaryScreenState extends State<SalaryScreen> {
                 children: [
                   _buildSalaryRow('Lương cơ bản', _currentPayslip != null ? _formatCurrency(_currentPayslip!.baseSalary.toInt()) : '—'),
                   const Divider(height: 16),
+                  _buildSalaryRow('Thưởng', _currentPayslip != null ? _formatCurrency(_currentPayslip!.bonus.toInt()) : '—', isPositive: true),
+                  const Divider(height: 16),
                   _buildSalaryRow('Số giờ làm việc được phân công', _assignedHours > 0 ? '${_assignedHours.toStringAsFixed(1)} giờ' : '—'),
                   const Divider(height: 16),
                   _buildSalaryRow('Số ca làm việc được phân công', _assignedShiftCount > 0 ? '$_assignedShiftCount ca' : '—'),
@@ -423,11 +425,6 @@ class _SalaryScreenState extends State<SalaryScreen> {
                             Text(
                               'Chưa có dữ liệu chấm công',
                               style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              'Dữ liệu ca làm sẽ hiện khi API chấm công sẵn sàng',
-                              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                             ),
                           ],
                         ),
@@ -536,7 +533,7 @@ class _SalaryScreenState extends State<SalaryScreen> {
 
   Widget _buildSalaryRow(String label, String amount, {bool isPositive = false, bool isNegative = false}) {
     Color amountColor = AppColors.textPrimary;
-    if (isPositive) amountColor = const Color(0xFF10B981);
+    if (isPositive) amountColor = AppColors.successGreen;
     if (isNegative) amountColor = AppColors.error;
 
     return Row(

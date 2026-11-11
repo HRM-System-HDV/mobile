@@ -10,12 +10,14 @@ class AttendanceRepository {
     required String employeeId,
     required String shiftId,
     String? wifiSsid,
+    String? wifiBssid,
     String? checkinTime,
   }) async {
     final res = await api.postJson('/api/attendance/checkin', {
       'employeeId': employeeId,
       'shiftId': shiftId,
       if (wifiSsid != null) 'wifiSsid': wifiSsid,
+      if (wifiBssid != null) 'wifiBssid': wifiBssid,
       if (checkinTime != null) 'checkinTime': checkinTime,
     });
     final Map<String, dynamic> data = res is Map<String, dynamic> ? res : {};

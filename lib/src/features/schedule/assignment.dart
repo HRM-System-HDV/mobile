@@ -197,16 +197,16 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
         final end = t['endTime']?.toString() ?? '';
 
         FaIconData icon = FontAwesomeIcons.briefcase;
-        Color color = const Color(0xFF00695C);
+        Color color = AppColors.successDark;
         if (name.contains('Sáng')) {
           icon = FontAwesomeIcons.sun;
-          color = const Color(0xFFE65100);
+          color = AppColors.warningDark;
         } else if (name.contains('Chiều')) {
           icon = FontAwesomeIcons.cloudSun;
-          color = const Color(0xFF0277BD);
+          color = AppColors.infoBlue;
         } else if (name.contains('Tối')) {
           icon = FontAwesomeIcons.moon;
-          color = const Color(0xFF4A148C);
+          color = AppColors.primary;
         }
 
         templates.add(ShiftInfo(
@@ -315,7 +315,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
               name: k,
               timeRange: '—',
               icon: FontAwesomeIcons.briefcase,
-              color: const Color(0xFF616161),
+              color: AppColors.textSecondary,
             ));
     return [..._availableShifts, ...extra];
   }
@@ -668,12 +668,12 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
 
           // Phần xổ xuống: Danh sách các nhân viên đã được xếp
           if (isExpanded) ...[
-            const Divider(height: 1, thickness: 1, color: Color(0xFFF1F5F9)),
+            const Divider(height: 1, thickness: 1, color: AppColors.border),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
               decoration: const BoxDecoration(
-                color: Color(0xFFF8FAFC),
+                color: AppColors.surfaceSubtle,
                 borderRadius: BorderRadius.vertical(bottom: Radius.circular(15)),
               ),
               child: staffList.isEmpty
@@ -768,10 +768,10 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                 decoration: BoxDecoration(
-                  color: staff.isRecurring ? const Color(0xFFEFF6FF) : Colors.grey.shade100,
+                  color: staff.isRecurring ? AppColors.infoBg : Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                    color: staff.isRecurring ? const Color(0xFF3B82F6) : Colors.grey.shade300,
+                    color: staff.isRecurring ? AppColors.infoLight : Colors.grey.shade300,
                   ),
                 ),
                 child: Row(
@@ -780,7 +780,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                     FaIcon(
                       staff.isRecurring ? FontAwesomeIcons.repeat : FontAwesomeIcons.one,
                       size: 13,
-                      color: staff.isRecurring ? const Color(0xFF1D4ED8) : Colors.grey.shade600,
+                      color: staff.isRecurring ? AppColors.infoBlue : Colors.grey.shade600,
                     ),
                     const SizedBox(width: 4),
                     Text(
@@ -788,7 +788,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
-                        color: staff.isRecurring ? const Color(0xFF1D4ED8) : Colors.grey.shade700,
+                        color: staff.isRecurring ? AppColors.infoBlue : Colors.grey.shade700,
                       ),
                     ),
                   ],
@@ -967,7 +967,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                                             ),
                                             child: const Text(
                                               '⭐ Muốn làm ca này',
-                                              style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Color(0xFFB45309)),
+                                              style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: AppColors.warningText),
                                             ),
                                           ),
                                       ],
@@ -1000,10 +1000,10 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                                     decoration: BoxDecoration(
-                                      color: isRec ? const Color(0xFFEFF6FF) : Colors.grey.shade100,
+                                      color: isRec ? AppColors.infoBg : Colors.grey.shade100,
                                       borderRadius: BorderRadius.circular(8),
                                       border: Border.all(
-                                        color: isRec ? const Color(0xFF3B82F6) : Colors.grey.shade300,
+                                        color: isRec ? AppColors.infoLight : Colors.grey.shade300,
                                       ),
                                     ),
                                     child: Row(
@@ -1012,7 +1012,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                                         FaIcon(
                                           isRec ? FontAwesomeIcons.repeat : FontAwesomeIcons.one,
                                           size: 13,
-                                          color: isRec ? const Color(0xFF1D4ED8) : Colors.grey.shade600,
+                                          color: isRec ? AppColors.infoBlue : Colors.grey.shade600,
                                         ),
                                         const SizedBox(width: 3),
                                         Text(
@@ -1020,7 +1020,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                                           style: TextStyle(
                                             fontSize: 10.5,
                                             fontWeight: FontWeight.bold,
-                                            color: isRec ? const Color(0xFF1D4ED8) : Colors.grey.shade700,
+                                            color: isRec ? AppColors.infoBlue : Colors.grey.shade700,
                                           ),
                                         ),
                                       ],

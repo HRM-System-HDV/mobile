@@ -82,7 +82,7 @@ class TaskModel {
 
   Color get sourceColor => sourceType == TaskSourceType.manager
       ? AppColors.primary
-      : const Color(0xFF2563EB);
+      : AppColors.infoBlue;
 
   String get priorityLabel {
     switch (priority) {
@@ -98,11 +98,11 @@ class TaskModel {
   Color get priorityColor {
     switch (priority) {
       case TaskPriority.urgent:
-        return const Color(0xFFDC2626);
+        return AppColors.error;
       case TaskPriority.high:
-        return const Color(0xFFEA580C);
+        return AppColors.warningAmber;
       case TaskPriority.normal:
-        return const Color(0xFF64748B);
+        return AppColors.textSecondary;
     }
   }
 
@@ -124,33 +124,16 @@ class TaskModel {
       case TaskStatus.completed:
         return AppColors.success;
       case TaskStatus.inProgress:
-        return const Color(0xFFF59E0B);
+        return AppColors.warning;
       case TaskStatus.overdue:
-        return const Color(0xFFDC2626);
+        return AppColors.error;
       case TaskStatus.pending:
-        return const Color(0xFF3B82F6);
+        return AppColors.infoLight;
     }
   }
 }
 
 class TaskService {
-  /// Danh sách việc chỉ lấy từ API thật qua [TaskRepository].
-  /// Không còn mock fallback — trả về [] để UI hiện empty state.
-  /// TODO: nối API phân trang/lọc theo userEmail khi work-service hỗ trợ.
-  static List<TaskModel> getTasksForUser({String? userEmail}) {
-    return const [];
-  }
-
-  /// Cập nhật trạng thái công việc — TODO: nối API thật (hiện no-op,
-  /// màn hình gọi TaskRepository.updateTaskStatus rồi _loadTasks lại).
-  static void updateTaskStatus(String taskId, TaskStatus newStatus, {String? proofPhotoUrl}) {}
-
-  /// Hoàn thành công việc kèm ảnh minh chứng (nếu có) — TODO: nối API thật.
-  static void completeTask(String taskId, {String? proofPhotoUrl}) {}
-
-  /// Thêm công việc mới — TODO: nối API thật qua TaskRepository.createTask.
-  static void addTask(TaskModel newTask) {}
-
   /// Thống kê số lượng việc từ danh sách API thật đã load ở UI.
   static Map<String, int> getTaskStats({List<TaskModel> tasks = const []}) {
     int total = tasks.length;

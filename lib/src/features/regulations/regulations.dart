@@ -90,7 +90,7 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
       return Colors.indigo;
     }
     if (lower.contains('văn hóa') || lower.contains('tác phong') || lower.contains('ứng xử')) {
-      return const Color(0xFF6A1B9A);
+      return AppColors.primary;
     }
     return Colors.blue;
   }
