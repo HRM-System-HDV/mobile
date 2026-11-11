@@ -147,6 +147,7 @@ class AppRouter {
               shift: m['shift'] as GeneralShiftModel,
               day: m['day'] as GeneralDayModel,
               gracePeriodMinutes: m['gracePeriodMinutes'] as int? ?? 5,
+              checkoutWindowMinutes: m['checkoutWindowMinutes'] as int? ?? 60,
             );
           }
           return const GeneralScheduleScreen();

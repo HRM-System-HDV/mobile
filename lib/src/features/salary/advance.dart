@@ -302,9 +302,6 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
           ),
           const SizedBox(height: 20),
 
-          const Text('Lịch sử các đợt tạm ứng', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-          const SizedBox(height: 10),
-
           if (_records.isEmpty)
             Container(
               padding: const EdgeInsets.symmetric(vertical: 36),

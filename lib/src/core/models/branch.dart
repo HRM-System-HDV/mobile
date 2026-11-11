@@ -58,13 +58,12 @@ Branch branchById(String idOrSlug) {
     }
   }
 
-  // Nếu chưa có trong cache, tạo Branch động với slug/id đó thay vì mock dữ liệu giả
-  final code = query.toUpperCase();
+  // Nếu chưa có trong cache, trả về chính slug/id đó (không bịa tiền tố "Chi nhánh")
   return Branch(
     id: query,
     slug: query,
-    code: code,
-    name: code.isNotEmpty ? 'Chi nhánh $code' : 'Chi nhánh',
+    code: query.toUpperCase(),
+    name: query,
     address: '',
   );
 }

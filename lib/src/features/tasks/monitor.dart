@@ -157,12 +157,16 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
             ),
             child: Row(
               children: [
-                const FaIcon(FontAwesomeIcons.store, color: AppColors.primary, size: 16),
-                const SizedBox(width: 6),
-                Text(
-                  BranchScope.label(context),
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
-                ),
+                // Luật 12/11: tài khoản bị ghim không còn indicator scope
+                // (BranchSelector trên AppBar cũng đã ẩn cho non-admin).
+                if (isAdmin) ...[
+                  const FaIcon(FontAwesomeIcons.store, color: AppColors.primary, size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    BranchScope.label(context),
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
+                  ),
+                ],
                 const Spacer(),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

@@ -317,6 +317,12 @@ class ApiClient {
   }
 
   /// POST SOAP nguyên vẹn XML (gateway không bọc envelope).
+  ///
+  /// Gateway chỉ mở `POST /soap/payroll` cho vai trò `admin`
+  /// (`backend/api-gateway/src/middlewares/authorize.js`), nên phải ném
+  /// [ApiException] khi ngoài 2xx: nếu không thì body lỗi `{ error }` của 403
+  /// sẽ bị trả về như một phản hồi SOAP thành công, rất khó hiểu với
+  /// staff/manager.
   Future<String> postSoap(String xmlBody) async {
     final res = await _send(
       'POST',
@@ -325,6 +331,9 @@ class ApiClient {
       body: xmlBody,
       extraHeaders: {'Content-Type': 'text/xml; charset=utf-8'},
     );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      _throwFromBody(res.statusCode, _tryDecode(res.body));
+    }
     return res.body;
   }
 }

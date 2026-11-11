@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
+import '../../core/models/branch.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/models/user.dart';
@@ -69,6 +70,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final phone = me.phone.isNotEmpty ? me.phone : '—';
     final avatarProvider = parseImageProvider(me.avatarUrl);
 
+    // Chi nhánh của CHÍNH tài khoản (không phụ thuộc scope đang xem).
+    // Luật 12/11: tài khoản bị ghim (manager/staff) chỉ hiện tên chi nhánh ở
+    // đúng 1 chỗ duy nhất là tab "Cá nhân"; admin không bị ghim => hiện scope
+    // đang xem ("Tất cả chi nhánh" hoặc chi nhánh đã chọn trên AppBar).
+    // Nếu branchById không phân giải được (cache chưa nạp) thì hiện slug viết
+    // hoa — tuyệt đối không bịa tên chi nhánh.
+    final String pinnedBranch = (me.assignedBranchId?.trim() ?? '').isNotEmpty
+        ? me.assignedBranchId!.trim()
+        : (me.branchSlug?.trim() ?? '');
+    String branchLabel = BranchScope.label(context);
+    if (!me.isAdmin && pinnedBranch.isNotEmpty) {
+      final lower = pinnedBranch.toLowerCase();
+      final bool resolved = branches.any((b) =>
+          b.id == pinnedBranch ||
+          b.slug.toLowerCase() == lower ||
+          b.code.toLowerCase() == lower);
+      branchLabel = resolved ? branchById(pinnedBranch).name : pinnedBranch.toUpperCase();
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -112,16 +132,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text(me.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
                       const SizedBox(height: 2),
-                      Text('$roleBadge • ${me.email}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                      const SizedBox(height: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: canManage ? AppColors.primary.withValues(alpha: 0.10) : Colors.blue.withValues(alpha: 0.10),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(BranchScope.label(context), style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: canManage ? AppColors.primary : Colors.blue.shade700)),
-                      ),
+                      // Dòng phụ: chức danh + chi nhánh (thay cho email, ẩn ở đây
+                      // để thẻ chỉ còn 2 hàng đều nhau; email xem trong hồ sơ cá nhân).
+                      Text('$roleBadge • $branchLabel',
+                          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
                     ]),
                   ),
                   const FaIcon(FontAwesomeIcons.chevronRight, size: 20, color: AppColors.textSecondary),
@@ -178,24 +194,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('HRM System v1.0.0', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
-                Text('Hệ thống Quản lý Nhân sự nội bộ', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-              ]),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade300)),
-                child: Row(children: [
-                  const FaIcon(FontAwesomeIcons.chevronDown, size: 16, color: AppColors.textSecondary),
-                  const SizedBox(width: 6),
-                  Container(width: 22, height: 14, decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(2)), child: const Center(child: Text('★', style: TextStyle(color: Colors.yellow, fontSize: 10)))),
-                ]),
-              ),
-            ],
-          ),
+          const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('HRM System v1.0.0', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
+            Text('Hệ thống Quản lý Nhân sự nội bộ', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+          ]),
           const SizedBox(height: 30),
         ],
       ),

@@ -111,6 +111,76 @@ void main() {
       expect(req.payload?['attendanceId'], 'att-1');
       expect(req.payload?['checkoutTime'], '17:05');
     });
+
+    test('chốt hộ ca bị bỏ qua: gửi employeeId + shiftId (không attendanceId)',
+        () async {
+      // Backend trả 'late' khi có phạt đi muộn, giữ nguyên penaltyAmount.
+      mockApi.postJsonResponse = {
+        'id': 'att-9',
+        'employeeId': 'emp-55',
+        'shiftId': 'shift-row-9',
+        'date': '15-11-2026',
+        'checkIn': '07:40',
+        'checkOut': '18:05',
+        'penaltyAmount': 30000,
+        'status': 'late',
+      };
+
+      final result = await repository.checkOut(
+        employeeId: 'emp-55',
+        shiftId: 'shift-row-9',
+        checkoutTime: '18:05',
+      );
+
+      expect(result.status, 'late');
+      expect(result.checkOut, '18:05');
+      expect(result.penaltyAmount, 30000.0);
+
+      final req = mockApi.requests.first;
+      expect(req.path, '/api/attendance/checkout');
+      expect(req.payload?['employeeId'], 'emp-55');
+      expect(req.payload?['shiftId'], 'shift-row-9');
+      expect(req.payload?.containsKey('attendanceId'), isFalse);
+    });
+
+    test('manager chốt khác chi nhánh: message backend 403 được nổi lên', () async {
+      mockApi.postJsonHandler = (path, payload) {
+        throw const ApiException(
+          'FORBIDDEN',
+          'Bạn chỉ chốt được ca của chi nhánh mình quản lý',
+          403,
+        );
+      };
+
+      await expectLater(
+        repository.checkOut(employeeId: 'emp-1', shiftId: 'shift-1', checkoutTime: '18:00'),
+        throwsA(
+          isA<ApiException>()
+              .having((e) => e.status, 'status', 403)
+              .having((e) => e.message, 'message',
+                  'Bạn chỉ chốt được ca của chi nhánh mình quản lý'),
+        ),
+      );
+    });
+
+    test('staff tự chốt quá cửa sổ: message backend 400 được nổi lên', () async {
+      mockApi.postJsonHandler = (path, payload) {
+        throw const ApiException(
+          'SHIFT_MISSED',
+          'Ca đã quá hạn chốt ra nên bị bỏ qua; bạn hãy liên hệ quản lý hoặc admin để chốt ca này',
+          400,
+        );
+      };
+
+      await expectLater(
+        repository.checkOut(employeeId: 'emp-1', shiftId: 'shift-1', checkoutTime: '18:00'),
+        throwsA(
+          isA<ApiException>()
+              .having((e) => e.status, 'status', 400)
+              .having((e) => e.code, 'code', 'SHIFT_MISSED'),
+        ),
+      );
+    });
   });
 
   group('AttendanceRepository.getConfig', () {

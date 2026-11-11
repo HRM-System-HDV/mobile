@@ -94,6 +94,18 @@ class _NewsScreenState extends State<NewsScreen> {
     }
   }
 
+  /// Ánh xạ slug chi nhánh của tin về tên hiển thị từ `_branches` đã nạp;
+  /// không map được thì giữ nguyên chuỗi gốc.
+  String _branchDisplayName(String raw) {
+    final lower = raw.toLowerCase();
+    for (final b in _branches) {
+      if (b.slug.toLowerCase() == lower || b.code.toLowerCase() == lower) {
+        return b.name;
+      }
+    }
+    return raw;
+  }
+
   void _showDetail(BuildContext context, NewsArticle article) {
     showModalBottomSheet(
       context: context,
@@ -162,7 +174,7 @@ class _NewsScreenState extends State<NewsScreen> {
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
-                        article.branch,
+                        _branchDisplayName(article.branch),
                         style: const TextStyle(fontSize: 10.5, color: AppColors.textSecondary),
                       ),
                     ),

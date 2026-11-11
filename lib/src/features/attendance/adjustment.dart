@@ -324,29 +324,6 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
               const LinearProgressIndicator(),
               const SizedBox(height: 12),
             ],
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppColors.successBg,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.successGreen),
-              ),
-              child: const Row(
-                children: [
-                  FaIcon(FontAwesomeIcons.circleCheck, color: AppColors.success, size: 22),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Đơn giải trình hợp lệ sẽ được Quản lý chi nhánh duyệt và cập nhật công ca vào bảng lương tháng.',
-                      style: TextStyle(fontSize: 12.5, color: AppColors.successDark, height: 1.3),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 18),
-            const Text('Danh sách yêu cầu bổ sung công', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-            const SizedBox(height: 10),
             if (_items.isEmpty && !_isLoading)
               Container(
                 padding: const EdgeInsets.symmetric(vertical: 36),

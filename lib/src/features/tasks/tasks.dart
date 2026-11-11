@@ -911,10 +911,20 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                     items: _employeeList.map((e) {
                       final name = e['name']?.toString() ?? 'Nhân viên';
                       final role = e['role']?.toString() ?? 'Nhân viên';
-                      final branch = e['branchSlug']?.toString() ?? e['branch']?.toString() ?? '';
+                      final branchSlug =
+                          e['branchSlug']?.toString() ?? e['branch']?.toString() ?? '';
+                      // Map slug→tên chi nhánh từ _branchList đã nạp; không map được giữ nguyên.
+                      String branchLabel = branchSlug;
+                      for (final b in _branchList) {
+                        if (b.slug.toLowerCase() == branchSlug.toLowerCase() ||
+                            b.code.toLowerCase() == branchSlug.toLowerCase()) {
+                          branchLabel = b.name;
+                          break;
+                        }
+                      }
                       return DropdownMenuItem(
                         value: name,
-                        child: Text('$name ($role${branch.isNotEmpty ? ' - $branch' : ''})'),
+                        child: Text('$name ($role${branchSlug.isNotEmpty ? ' - $branchLabel' : ''})'),
                       );
                     }).toList(),
                     onChanged: (val) {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/models/branch.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
@@ -238,7 +239,7 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
                   _divider(),
                   _buildInfoRow(FontAwesomeIcons.stopwatch, 'Số giờ làm việc', widget.shiftHours.isEmpty ? '—' : widget.shiftHours),
                   _divider(),
-                  _buildInfoRow(FontAwesomeIcons.store, 'Chi nhánh', widget.branch),
+                  _buildInfoRow(FontAwesomeIcons.store, 'Chi nhánh', _branchLabel(widget.branch)),
                   _divider(),
                   _buildInfoRow(FontAwesomeIcons.idCard, 'Vị trí công việc', widget.shiftRole.isEmpty ? '—' : widget.shiftRole),
                   _divider(),
@@ -294,7 +295,7 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
                     _divider(),
                     _buildInfoRow(FontAwesomeIcons.stopwatch, 'Số giờ làm việc', widget.swapShiftHours ?? '—'),
                     _divider(),
-                    _buildInfoRow(FontAwesomeIcons.store, 'Chi nhánh', widget.swapShiftBranch ?? widget.branch),
+                    _buildInfoRow(FontAwesomeIcons.store, 'Chi nhánh', _branchLabel(widget.swapShiftBranch ?? widget.branch)),
                     _divider(),
                     _buildInfoRow(FontAwesomeIcons.idCard, 'Vị trí công việc', widget.swapShiftRole ?? '—'),
                     _divider(),
@@ -351,6 +352,14 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
   }
 
   Widget _divider() => const Divider(height: 1, indent: 16, endIndent: 16);
+
+  /// Ánh xạ slug chi nhánh (từ notification) về tên hiển thị qua cache branch
+  /// toàn cục (được nạp lúc đăng nhập); không map được thì giữ nguyên slug.
+  String _branchLabel(String raw) {
+    if (raw.trim().isEmpty) return '—';
+    final name = branchById(raw.trim()).name;
+    return name.isEmpty ? raw : name;
+  }
 
   Widget _buildInfoRow(FaIconData icon, String label, String value, {Color? valueColor}) {
     return Padding(

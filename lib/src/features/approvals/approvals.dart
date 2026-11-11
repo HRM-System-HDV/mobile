@@ -194,6 +194,9 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
   Widget build(BuildContext context) {
     final bool isAdmin = UserScope.isAdmin(context);
     final String pageTitle = isAdmin ? 'Phê duyệt yêu cầu' : 'Duyệt yêu cầu chi nhánh';
+    // Chỉ Admin/Manager mới có quyền duyệt ⇒ nhân viên vào màn này (deep link)
+    // không thấy nút Duyệt/Từ chối.
+    final bool canReview = UserScope.canManage(context);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -229,7 +232,7 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
             child: TabBarView(
               controller: _tabController,
               children: [
-                _buildRequestList(_pendingRequests, showActions: true),
+                _buildRequestList(_pendingRequests, showActions: canReview),
                 _buildRequestList(_approvedRequests, showActions: false),
                 _buildRequestList(_rejectedRequests, showActions: false),
               ],

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/models/branch.dart';
+import '../../core/models/user.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
@@ -43,11 +44,25 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final Branch? branch = BranchScope.selectedBranch(context);
+    final Branch? branch = _targetBranch();
     if (branch == null) return;
     if (_loadedBranchId != branch.id) {
       _loadBranch(branch);
     }
+  }
+
+  /// Chi nhánh mà màn hình này thao tác trên đó.
+  ///
+  /// - Admin: theo scope đang chọn (đổi được, kể cả "Tất cả chi nhánh").
+  /// - Manager/Staff: bị ghim cứng vào chi nhánh mà admin đã gán nên luôn dùng
+  ///   `assignedBranchId`/`branchSlug` của chính họ, không phụ thuộc scope.
+  Branch? _targetBranch() {
+    final Branch? scope = BranchScope.selectedBranch(context);
+    if (UserScope.isAdmin(context)) return scope;
+    final UserModel? me = UserScope.currentUser(context);
+    final String pinned = me?.assignedBranchId ?? me?.branchSlug ?? '';
+    if (pinned.isNotEmpty) return branchById(pinned);
+    return scope;
   }
 
   Future<void> _loadBranch(Branch branch) async {
@@ -291,6 +306,8 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
   }
 
   Future<void> _saveConfig(Branch branch) async {
+    // Chốt an toàn giống _showBranchPicker: gateway chỉ nhận lượt ghi từ admin.
+    if (!UserScope.isAdmin(context)) return;
     final pending =
         _entries.where((e) => e.ssidController.text.trim().isNotEmpty).toList();
     if (pending.isEmpty) {
@@ -351,6 +368,8 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
   }
 
   void _showBranchPicker() {
+    // Chỉ Admin được đổi scope chi nhánh; Manager bị ghim vào chi nhánh được gán.
+    if (!UserScope.isAdmin(context)) return;
     final current = BranchScope.selectedBranch(context);
     showModalBottomSheet(
       context: context,
@@ -450,7 +469,7 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
   Widget build(BuildContext context) {
     final bool isAdmin = UserScope.isAdmin(context);
     final String pageTitle = isAdmin ? 'Cấu hình Wi-Fi' : 'Wi-Fi chi nhánh';
-    final Branch? branch = BranchScope.selectedBranch(context);
+    final Branch? branch = _targetBranch();
     final bool isAll = branch == null;
 
     return Scaffold(
@@ -496,110 +515,155 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 6),
-                  const Text(
-                    'Vui lòng dùng nút cửa hàng trên góc phải để chọn một chi nhánh cụ thể trước khi chỉnh sửa.',
-                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.4),
+                  Text(
+                    // Manager/Staff không có quyền đổi scope nên không hiện nút chọn.
+                    isAdmin
+                        ? 'Vui lòng dùng nút cửa hàng trên góc phải để chọn một chi nhánh cụ thể trước khi chỉnh sửa.'
+                        : 'Tài khoản của bạn chưa được gán chi nhánh nào, liên hệ Quản trị viên để được gán chi nhánh.',
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.4),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: _showBranchPicker,
-                    icon: const FaIcon(FontAwesomeIcons.store, size: 18),
-                    label: const Text('Chọn chi nhánh'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primary,
-                      side: BorderSide(color: AppColors.primary.withValues(alpha: 0.4)),
+                  if (isAdmin) ...[
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _showBranchPicker,
+                      icon: const FaIcon(FontAwesomeIcons.store, size: 18),
+                      label: const Text('Chọn chi nhánh'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        side: BorderSide(color: AppColors.primary.withValues(alpha: 0.4)),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             )
-          else
-            _buildConfigForm(branch),
+          else ...[
+            // Luật 12/11: ẩn hẳn thanh "Chi nhánh của bạn" với vai trò bị ghim
+            // (tên chi nhánh chỉ hiển thị ở tab "Cá nhân"). Việc đọc/ghi vẫn
+            // dùng `_targetBranch()` (ghim theo assignedBranchId), payload không đổi.
+            // Gateway chỉ mở quyền ghi (POST/PUT/DELETE /api/wifi-configs) cho
+            // admin, nên Manager/Staff xem ở chế độ đọc để không bấm rồi nhận 403.
+            _buildConfigForm(branch, canEdit: isAdmin),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildConfigForm(Branch branch) {
+  Widget _buildConfigForm(Branch branch, {required bool canEdit}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (int i = 0; i < _entries.length; i++) _buildNetworkCard(_entries[i], i),
+        for (int i = 0; i < _entries.length; i++)
+          _buildNetworkCard(_entries[i], i, canEdit: canEdit),
         const SizedBox(height: 12),
 
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _addNetwork,
-                icon: const FaIcon(FontAwesomeIcons.plus, size: 15),
-                label: const Text(
-                  'Thêm thủ công',
-                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
-                ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.textPrimary,
-                  side: BorderSide(color: Colors.grey.shade300),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: _isScanning ? null : _scanNearbyWifi,
-                icon: _isScanning
-                    ? const SizedBox(
-                        width: 15,
-                        height: 15,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : const FaIcon(FontAwesomeIcons.wifi, size: 15),
-                label: const Text(
-                  'Quét mạng quanh đây',
-                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-
-        SizedBox(
-          width: double.infinity,
-          height: 50,
-          child: ElevatedButton(
-            onPressed: _isSaving ? null : () => _saveConfig(branch),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            ),
-            child: _isSaving
-                ? const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
-                  )
-                : const Text(
-                    'Lưu cấu hình Wi-Fi',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        if (canEdit) ...[
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _addNetwork,
+                  icon: const FaIcon(FontAwesomeIcons.plus, size: 15),
+                  label: const Text(
+                    'Thêm thủ công',
+                    style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
                   ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.textPrimary,
+                    side: BorderSide(color: Colors.grey.shade300),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _isScanning ? null : _scanNearbyWifi,
+                  icon: _isScanning
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const FaIcon(FontAwesomeIcons.wifi, size: 15),
+                  label: const Text(
+                    'Quét mạng quanh đây',
+                    style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ),
+          const SizedBox(height: 20),
+
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton(
+              onPressed: _isSaving ? null : () => _saveConfig(branch),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              child: _isSaving
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                    )
+                  : const Text(
+                      'Lưu cấu hình Wi-Fi',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+            ),
+          ),
+        ] else
+          _buildReadonlyHint(),
       ],
     );
   }
 
-  Widget _buildNetworkCard(_WifiEntry entry, int index) {
+  /// Dòng nhắc quyền cho Manager/Staff: chỉ được xem, việc đổi cấu hình Wi-Fi
+  /// do Quản trị viên thực hiện (gateway chặn mọi lượt ghi ngoài admin).
+  Widget _buildReadonlyHint() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        children: [
+          FaIcon(FontAwesomeIcons.lock, size: 16, color: Colors.amber.shade800),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Chỉ Quản trị viên mới được thay đổi cấu hình Wi-Fi. '
+              'Bạn chỉ có thể xem cấu hình hiện tại của chi nhánh.',
+              style: TextStyle(
+                fontSize: 12.5,
+                color: AppColors.textSecondary,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNetworkCard(_WifiEntry entry, int index, {required bool canEdit}) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -629,7 +693,8 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
                 ),
               ),
               const Spacer(),
-              if (_entries.length > 1)
+              // Nút xóa gọi DELETE /api/wifi-configs/:id nên chỉ admin thấy được.
+              if (_entries.length > 1 && canEdit)
                 IconButton(
                   icon: const FaIcon(FontAwesomeIcons.trashCan, color: AppColors.error, size: 20),
                   tooltip: 'Xóa mạng',
@@ -640,6 +705,7 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
           const SizedBox(height: 8),
           TextField(
             controller: entry.ssidController,
+            readOnly: !canEdit,
             decoration: InputDecoration(
               labelText: 'Tên mạng (SSID)',
               prefixIcon: const Icon(Icons.wifi_rounded, color: AppColors.primary, size: 22),
@@ -661,6 +727,7 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
             controller: entry.bssidController,
             keyboardType: TextInputType.text,
             autocorrect: false,
+            readOnly: !canEdit,
             decoration: InputDecoration(
               labelText: 'Địa chỉ BSSID (MAC của điểm phát)',
               prefixIcon: const Icon(Icons.router_outlined, color: AppColors.primary, size: 22),
@@ -702,7 +769,10 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
               Switch(
                 value: entry.enforceCheckIn,
                 activeTrackColor: AppColors.primary,
-                onChanged: (value) => setState(() => entry.enforceCheckIn = value),
+                // onChanged = null: switch chỉ bật/tắt được với admin.
+                onChanged: canEdit
+                    ? (value) => setState(() => entry.enforceCheckIn = value)
+                    : null,
               ),
             ],
           ),

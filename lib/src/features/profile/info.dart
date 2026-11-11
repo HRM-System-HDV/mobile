@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/constants/colors.dart';
+import '../../core/models/branch.dart';
 import '../../core/models/user.dart';
 import '../../core/network/api_client.dart';
 import '../../core/services/upload_service.dart';
@@ -305,6 +306,21 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Dòng phụ của thẻ đầu trang: chi nhánh thay cho email.
+    // Admin: scope đang xem. Manager/Staff: chi nhánh ghim của tài khoản,
+    // map slug→name qua cache branches; cache-miss thì in slug viết hoa, không bịa tên.
+    final me = UserScope.currentUser(context) ?? widget.user;
+    final pinned = (me?.assignedBranchId?.trim() ?? '').isNotEmpty
+        ? me!.assignedBranchId!.trim()
+        : (me?.branchSlug?.trim() ?? '');
+    String branchLabel = BranchScope.label(context);
+    if (me != null && !me.isAdmin && pinned.isNotEmpty) {
+      final lower = pinned.toLowerCase();
+      final resolved = branches.any((b) =>
+          b.id == pinned || b.slug.toLowerCase() == lower || b.code.toLowerCase() == lower);
+      branchLabel = resolved ? branchById(pinned).name : pinned.toUpperCase();
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -365,9 +381,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(_nameCtrl.text, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
-                Text(widget.email, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary), overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 4),
-                Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(20)), child: Text(BranchScope.label(context), style: const TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.bold))),
+                Text(branchLabel, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary), maxLines: 1, overflow: TextOverflow.ellipsis),
               ])),
             ]),
           ),

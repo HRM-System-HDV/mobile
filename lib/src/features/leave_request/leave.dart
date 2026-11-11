@@ -289,9 +289,6 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
         child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text('Lịch sử đơn nghỉ phép', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-          const SizedBox(height: 10),
-
           if (_requests.isEmpty)
             Container(
               padding: const EdgeInsets.symmetric(vertical: 36),

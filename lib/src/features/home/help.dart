@@ -57,9 +57,6 @@ class FaqHelpScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text('Các câu hỏi phổ biến', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-          const SizedBox(height: 10),
-
           ..._faqs.map((faq) => _buildFaqCard(faq)),
         ],
       ),
