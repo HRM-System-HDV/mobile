@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
-import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../attendance/attendance_repository.dart';
@@ -144,45 +143,6 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
       ),
       body: Column(
         children: [
-          // Branch + shift info bar
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.06),
-              border: Border(
-                top: BorderSide(color: Colors.grey.shade200),
-                bottom: BorderSide(color: Colors.grey.shade200),
-              ),
-            ),
-            child: Row(
-              children: [
-                // Luật 12/11: tài khoản bị ghim không còn indicator scope
-                // (BranchSelector trên AppBar cũng đã ẩn cho non-admin).
-                if (isAdmin) ...[
-                  const FaIcon(FontAwesomeIcons.store, color: AppColors.primary, size: 16),
-                  const SizedBox(width: 6),
-                  Text(
-                    BranchScope.label(context),
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
-                  ),
-                ],
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Text(
-                    '● Ca Sáng đang diễn ra',
-                    style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
           // Tab bar
           Container(
             color: Colors.white,

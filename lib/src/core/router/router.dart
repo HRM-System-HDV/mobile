@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../models/user.dart';
 import '../state/user_scope.dart';
+import '../widgets/no_access_screen.dart';
 
 import '../../features/auth/splash.dart';
 import '../../features/auth/login.dart';
@@ -94,8 +95,10 @@ class AppRouter {
       GoRoute(
         path: '/schedule/assignment',
         name: 'schedule_assignment',
-        builder: (context, state) => ShiftAssignmentScreen(
-          currentUser: _resolveUser(context, state),
+        builder: (context, state) => guardRoute(
+          context,
+          '/schedule/assignment',
+          ShiftAssignmentScreen(currentUser: _resolveUser(context, state)),
         ),
       ),
       GoRoute(
@@ -194,17 +197,20 @@ class AppRouter {
       GoRoute(
         path: '/tasks/monitor',
         name: 'tasks_monitor',
-        builder: (context, state) => const StaffMonitorScreen(),
+        builder: (context, state) =>
+            guardRoute(context, '/tasks/monitor', const StaffMonitorScreen()),
       ),
       GoRoute(
         path: '/approvals',
         name: 'approvals',
-        builder: (context, state) => const ShiftRequestScreen(),
+        builder: (context, state) =>
+            guardRoute(context, '/approvals', const ShiftRequestScreen()),
       ),
       GoRoute(
         path: '/wifi',
         name: 'wifi',
-        builder: (context, state) => const WifiConfigScreen(),
+        builder: (context, state) =>
+            guardRoute(context, '/wifi', const WifiConfigScreen()),
       ),
       GoRoute(
         path: '/news',

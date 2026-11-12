@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
+import '../../core/config/permissions.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../../core/models/user.dart';
 
@@ -19,6 +20,11 @@ class OperationsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final bool isAdmin = currentUser.isAdmin;
     final bool canManage = currentUser.canManage;
+    // Danh sách thẻ lấy theo bảng quyền kRoleRestrictedRoutes, không bấm thủ
+    // công từng `isAdmin`/`canManage`: tính năng nào web ẩn là mobile ẩn, thay
+    // vì hiện thẻ rồi báo "không có quyền" sau khi chạm.
+    final bool showAdminGroup = canAccessRoute(currentUser, '/tasks/monitor');
+    final bool showWifiConfig = canAccessRoute(currentUser, '/wifi');
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -43,7 +49,7 @@ class OperationsScreen extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         children: [
           // ── CỤM 1: QUẢN TRỊ (Chỉ hiển thị cho Quản trị viên & Quản lý) ──
-          if (canManage) ...[
+          if (showAdminGroup) ...[
             _buildSubGroupLabel(
               'Quản trị',
               FontAwesomeIcons.userShield,
@@ -89,16 +95,18 @@ class OperationsScreen extends StatelessWidget {
                 context.push('/tasks', extra: currentUser);
               },
             ),
-            _buildFeatureCard(
-              title: isAdmin ? 'Cấu hình Wi-Fi' : 'Wi-Fi chi nhánh',
-              icon: FontAwesomeIcons.wifi,
-              iconColor: Colors.teal.shade700,
-              badgeText: 'Wi-Fi Check',
-              badgeColor: Colors.teal.shade700,
-              onTap: () {
-                context.push('/wifi');
-              },
-            ),
+            // Cấu hình Wi-Fi là tính năng hệ thống, manager không thấy (như web).
+            if (showWifiConfig)
+              _buildFeatureCard(
+                title: 'Cấu hình Wi-Fi',
+                icon: FontAwesomeIcons.wifi,
+                iconColor: Colors.teal.shade700,
+                badgeText: 'Wi-Fi Check',
+                badgeColor: Colors.teal.shade700,
+                onTap: () {
+                  context.push('/wifi');
+                },
+              ),
             const SizedBox(height: 14),
           ],
 
