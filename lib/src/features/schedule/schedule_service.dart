@@ -11,7 +11,10 @@ class ShiftDetail {
   final String startTime;
   final String endTime;
   final double? hours;
+  /// Tên chi nhánh để hiển thị.
   final String branch;
+  /// Mã chi nhánh (slug) để gửi lên API.
+  final String branchSlug;
   final String role;
   final String status; // 'completed', 'active', 'upcoming', 'missed'
 
@@ -22,6 +25,7 @@ class ShiftDetail {
     required this.endTime,
     required this.hours,
     required this.branch,
+    this.branchSlug = '',
     required this.role,
     required this.status,
   });
@@ -39,6 +43,7 @@ class ShiftDetail {
     String? endTime,
     double? hours,
     String? branch,
+    String? branchSlug,
     String? role,
     String? status,
   }) {
@@ -49,6 +54,7 @@ class ShiftDetail {
       endTime: endTime ?? this.endTime,
       hours: hours ?? this.hours,
       branch: branch ?? this.branch,
+      branchSlug: branchSlug ?? this.branchSlug,
       role: role ?? this.role,
       status: status ?? this.status,
     );
@@ -297,6 +303,7 @@ class ScheduleService {
             endTime: s.scheduledEnd,
             hours: hours,
             branch: branchDisplayName,
+            branchSlug: rawBranch,
             role: s.note ?? '',
             status: status,
           );
@@ -362,6 +369,7 @@ class ScheduleService {
         endTime: s.scheduledEnd,
         hours: hours,
         branch: branchDisplayName,
+        branchSlug: rawBranch,
         role: s.note ?? '',
         status: status,
       );

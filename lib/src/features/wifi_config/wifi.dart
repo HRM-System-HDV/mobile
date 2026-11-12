@@ -754,12 +754,12 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Bắt buộc dùng mạng này để chấm công',
+                      'Dùng mạng này khi chấm công',
                       style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                     ),
                     SizedBox(height: 2),
                     Text(
-                      'Nhân viên chỉ chấm công được khi kết nối đúng Wi-Fi chi nhánh',
+                      'Khi bấm nút Chấm công, app gửi kèm SSID/BSSID của mạng đang nối. Hệ thống chưa chặn chấm công nếu Wi-Fi không khớp',
                       style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
                     ),
                   ],

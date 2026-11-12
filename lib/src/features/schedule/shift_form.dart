@@ -355,7 +355,8 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
         'title': title,
         'content': content,
         'employeeId': me.id,
-        if (widget.shift.branch.isNotEmpty) 'branchSlug': widget.shift.branch,
+        // Gửi MÃ chi nhánh (slug) lên API, tên chỉ dùng hiển thị.
+        if (widget.shift.branchSlug.isNotEmpty) 'branchSlug': widget.shift.branchSlug,
         if (widget.shift.id.isNotEmpty) 'sourceShiftId': widget.shift.id,
         if (targetShiftId != null) 'targetShiftId': targetShiftId,
         if (targetEmployeeId != null) 'targetEmployeeId': targetEmployeeId,

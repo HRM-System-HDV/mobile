@@ -426,9 +426,18 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
     );
     if (confirm != true || !context.mounted) return;
     try {
-      if (shift.id.isNotEmpty) {
-        await ShiftRepository().deleteShift(shift.id);
+      // `staff.shiftId` là id DÒNG CA THẬT (CA-xxxx) lấy từ GET /api/shifts.
+      // `shift.id` là id khung ca mẫn nên backend không tìm thấy ca để xoá.
+      if (staff.shiftId.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ca chưa được phân cho nhân viên này nên không thể hủy'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        return;
       }
+      await ShiftRepository().deleteShift(staff.shiftId);
       if (!context.mounted) return;
       Navigator.pop(context, true);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -440,17 +449,37 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Hủy ca thất bại: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text(e is ApiException ? e.message : 'Hủy ca thất bại'),
+          backgroundColor: AppColors.error,
+        ),
       );
     }
   }
 
   Future<void> _handleCheckIn(BuildContext context) async {
     try {
-      final empId = staff.id.isNotEmpty ? staff.id : (staff.phone.isNotEmpty ? staff.phone : '1');
+      if (staff.id.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Không xác định được nhân viên để chấm công'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        return;
+      }
+      if (staff.shiftId.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ca chưa được phân cho nhân viên này nên không thể chấm công'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        return;
+      }
       await (attendance ?? AttendanceRepository()).checkIn(
-        employeeId: empId,
-        shiftId: shift.id,
+        employeeId: staff.id,
+        shiftId: staff.shiftId,
       );
       if (!context.mounted) return;
       Navigator.pop(context, true);
@@ -463,7 +492,10 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Chấm công thất bại: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text(e is ApiException ? e.message : 'Chấm công thất bại'),
+          backgroundColor: AppColors.error,
+        ),
       );
     }
   }

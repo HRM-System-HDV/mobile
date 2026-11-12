@@ -81,8 +81,6 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
           ShiftRequestType t = ShiftRequestType.leave;
           if (m.type == 'advance') {
             t = ShiftRequestType.advance;
-          } else if (m.type == 'overtime') {
-            t = ShiftRequestType.coverMe;
           } else if (m.type == 'shift_swap') {
             t = ShiftRequestType.swap;
           } else if (m.type == 'work_supplement') {

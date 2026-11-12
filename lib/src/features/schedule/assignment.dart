@@ -428,6 +428,8 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
     }
     if (!mounted) return;
     setState(() => staff.isRecurring = next);
+    // Tải lại để đồng bộ với backend (trạng thái lặp của ca trong DB).
+    _loadApiData();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(next

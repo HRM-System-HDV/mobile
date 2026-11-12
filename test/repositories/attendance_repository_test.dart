@@ -194,13 +194,17 @@ void main() {
       expect(config['requireWifi'], true);
     });
 
-    test('returns empty map on error without throwing', () async {
+    test('ném lỗi khi đọc cấu hình thất bại (không trả {} như thể chưa cấu hình)', () async {
       mockApi.getJsonHandler = (path, query) {
         throw const ApiException('SERVER_ERROR', 'Lỗi', 500);
       };
 
-      final config = await repository.getConfig();
-      expect(config, isEmpty);
+      // Lỗi mạng/403 phải nổ lên để tầng trên báo cho người dùng, không được
+      // lặng lẽ trả cấu hình rỗng (màn sẽ dùng mặc định 5/60 như thật).
+      await expectLater(
+        repository.getConfig(),
+        throwsA(isA<ApiException>()),
+      );
     });
   });
 

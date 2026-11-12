@@ -84,7 +84,10 @@ class _SalaryScreenState extends State<SalaryScreen> {
     for (final p in _apiPayslips) {
       if (p.month == q) return p;
     }
-    return _apiPayslips.isNotEmpty ? _apiPayslips.first : null;
+    // Không có phiếu đúng kỳ thì KHÔNG hiển thị phiếu của kỳ khác (trước đây
+    // lấy payslips.first nên người dùng thấy số tiền của kỳ khác dưới nhãn
+    // kỳ đang chọn).
+    return null;
   }
 
   Future<void> _loadPayslips() async {
@@ -247,16 +250,14 @@ class _SalaryScreenState extends State<SalaryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bool isAdmin = UserScope.isAdmin(context);
-    final bool canManage = UserScope.canManage(context);
-    final String pageTitle = isAdmin
-        ? 'Phiếu lương toàn công ty'
-        : (canManage ? 'Bảng công & Lương chi nhánh' : 'Kỳ lương & Phiếu lương cá nhân');
+    // Màn này chỉ hiển thị phiếu lương của chính mình (fetch theo employeeId
+    // của phiên) nên tiêu đề không được hứa "chi nhánh" cho quản lý.
+    const String pageTitle = 'Kỳ lương & Phiếu lương cá nhân';
 
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: Text(pageTitle),
+        title: const Text(pageTitle),
         backgroundColor: Colors.white,
         centerTitle: true,
         elevation: 0,

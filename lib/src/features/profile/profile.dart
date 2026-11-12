@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
 import '../../core/models/branch.dart';
+import '../../core/network/api_client.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/models/user.dart';
@@ -58,7 +59,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
         UserScope.setUser(context, updated);
       }
-    } catch (_) {}
+    } catch (e) {
+      // Lỗi tải hồ sơ: giữ dữ liệu cache trên màn, không báo là "không có hồ sơ".
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: AppColors.error,
+            content: Text(e is ApiException ? e.message : 'Không tải được hồ sơ nhân sự'),
+          ),
+        );
+      }
+    }
   }
 
   @override

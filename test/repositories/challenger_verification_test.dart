@@ -169,10 +169,10 @@ void main() {
       expect(mock.requests.first.payload?.containsKey('wifiBssid'), false);
       expect(mock.requests.first.payload?.containsKey('wifiSsid'), false);
 
-      // getConfig handles server crash by returning empty map instead of throwing
+      // getConfig nổ lỗi khi server lỗi: lỗi phải được báo ra chứ không lặng
+      // lẽ trả cấu hình rỗng.
       mock.getJsonHandler = (_, __) => throw const ApiException('CRASH', 'Server down', 500);
-      final cfg = await repo.getConfig();
-      expect(cfg, isEmpty);
+      await expectLater(repo.getConfig(), throwsA(isA<ApiException>()));
     });
 
     test('LeaveRepository: handles null query and deserializes LeaveRequestModel cleanly', () async {

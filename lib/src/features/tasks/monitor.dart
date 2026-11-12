@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
+import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../attendance/attendance_repository.dart';
@@ -49,6 +51,12 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
   // Chỉ dùng API thật (getEmployees + getAttendance) — khởi rỗng để hiện empty state
   final AttendanceRepository _attendanceRepo = AttendanceRepository();
   List<StaffMemberStatus> _staffList = [];
+  // Lỗi tải dữ liệu: hiển thị rõ thay vì hiện "không có dữ liệu" như thật.
+  String? _loadError;
+  bool _loading = false;
+  String? _loadedBranchSlug;
+  // Token phiên tải để kết quả cũ không ghi đè kết quả mới khi đổi chi nhánh.
+  int _requestToken = 0;
 
   @override
   void initState() {
@@ -59,55 +67,87 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
   }
 
   Future<void> _fetchStaffAttendance() async {
+    // Lấy chi nhánh đang chọn để lọc đúng phạm vi (BranchSelector có thật sự
+    // ảnh hưởng dữ liệu, không chỉ là trang trí).
+    final branch = BranchScope.selectedBranch(context);
+    final branchSlug = branch?.slug;
+    // Token phiên tải: nếu người dùng đổi chi nhánh giữa chừng thì kết quả
+    // cũ không được ghi đè lên kết quả mới.
+    _requestToken += 1;
+    final token = _requestToken;
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _loadError = null;
+      });
+    }
     try {
-      final emps = await EmployeeRepository().getEmployees();
-      final list = await _attendanceRepo.getAttendance();
+      final emps = await EmployeeRepository().getEmployees(branchSlug: branchSlug);
+      final list = await _attendanceRepo.getAttendance(branchSlug: branchSlug);
       // Map ca thật từ API shifts (fallback 'Chưa rõ' khi không khớp)
       List<ApiShiftModel> apiShifts = [];
       try {
-        apiShifts = await ShiftRepository().getShifts();
+        apiShifts = await ShiftRepository().getShifts(branchSlug: branchSlug);
       } catch (_) {
         apiShifts = [];
       }
-      if (mounted) {
-        final empById = <String, Map<String, dynamic>>{};
-        for (final e in emps) {
-          for (final k in ['id', 'email', 'employeeCode']) {
-            final v = e[k]?.toString();
-            if (v != null && v.isNotEmpty) empById[v] = e;
-          }
+      if (!mounted || token != _requestToken) return;
+      final empById = <String, Map<String, dynamic>>{};
+      for (final e in emps) {
+        for (final k in ['id', 'email', 'employeeCode']) {
+          final v = e[k]?.toString();
+          if (v != null && v.isNotEmpty) empById[v] = e;
         }
-        final shiftNameById = <String, String>{};
-        for (final s in apiShifts) {
-          shiftNameById[s.id] = s.template.isNotEmpty ? s.template : 'Chưa rõ';
-        }
-        final apiList = list.map((m) {
-          StaffAttendanceStatus st = StaffAttendanceStatus.present;
-          if (m.status == 'absent') st = StaffAttendanceStatus.absent;
-          if (m.status == 'late') st = StaffAttendanceStatus.late;
-          final emp = empById[m.employeeId];
-          // Không khớp nhân viên thật -> 'Chưa rõ' (không dùng mock 'Nhân sự #...')
-          final name = emp?['name']?.toString() ?? 'Chưa rõ';
-          final role = emp?['role']?.toString() ?? (emp?['position']?.toString() ?? 'Chưa rõ');
-          // Không khớp ca thật -> 'Chưa rõ' (không dùng 'Ca #...')
-          final shift = shiftNameById[m.shiftId] ?? 'Chưa rõ';
-          return StaffMemberStatus(
-            id: m.id,
-            name: name,
-            role: role,
-            shift: shift,
-            checkInTime: m.checkIn ?? '--:--',
-            checkOutTime: m.checkOut,
-            status: st,
-            avatar: name.isNotEmpty ? name[0].toUpperCase() : 'N',
-          );
-        }).toList();
-        setState(() {
-          _staffList = apiList;
-        });
       }
-    } catch (_) {
-      // Lỗi API: giữ state rỗng để hiện empty state, không dùng mock
+      final shiftNameById = <String, String>{};
+      for (final s in apiShifts) {
+        shiftNameById[s.id] = s.template.isNotEmpty ? s.template : 'Chưa rõ';
+      }
+      final apiList = list.map((m) {
+        StaffAttendanceStatus st = StaffAttendanceStatus.present;
+        if (m.status == 'absent') st = StaffAttendanceStatus.absent;
+        if (m.status == 'late') st = StaffAttendanceStatus.late;
+        final emp = empById[m.employeeId];
+        // Không khớp nhân viên thật -> 'Chưa rõ' (không dùng mock 'Nhân sự #...')
+        final name = emp?['name']?.toString() ?? 'Chưa rõ';
+        final role = emp?['role']?.toString() ?? (emp?['position']?.toString() ?? 'Chưa rõ');
+        // Không khớp ca thật -> 'Chưa rõ' (không dùng 'Ca #...')
+        final shift = shiftNameById[m.shiftId] ?? 'Chưa rõ';
+        return StaffMemberStatus(
+          id: m.id,
+          name: name,
+          role: role,
+          shift: shift,
+          checkInTime: m.checkIn ?? '--:--',
+          checkOutTime: m.checkOut,
+          status: st,
+          avatar: name.isNotEmpty ? name[0].toUpperCase() : 'N',
+        );
+      }).toList();
+      setState(() {
+        _staffList = apiList;
+        _loadedBranchSlug = branchSlug;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted || token != _requestToken) return;
+      setState(() {
+        _loading = false;
+        // Lỗi mạng/403 không được hiển thị như "không có nhân sự".
+        _loadError = e is ApiException
+            ? e.message
+            : 'Không tải được dữ liệu nhân sự. Kiểm tra kết nối hoặc thử lại.';
+      });
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Đổi chi nhánh ở BranchSelector thì phải tải lại dữ liệu cho đúng phạm vi.
+    final slug = BranchScope.selectedBranch(context)?.slug;
+    if (slug != _loadedBranchSlug && !_loading) {
+      _fetchStaffAttendance();
     }
   }
 
@@ -127,7 +167,12 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
   @override
   Widget build(BuildContext context) {
     final bool isAdmin = UserScope.isAdmin(context);
-    final String pageTitle = isAdmin ? 'Nhân sự toàn công ty' : 'Nhân sự chi nhánh';
+    // Tiêu đề phải nói đúng phạm vi dữ liệu đang hiển thị: có chi nhánh được
+    // chọn thì là chi nhánh đó, không chọn thì là toàn công ty.
+    final branch = BranchScope.selectedBranch(context);
+    final String pageTitle = branch != null
+        ? 'Nhân sự ${branch.name}'
+        : (isAdmin ? 'Nhân sự toàn công ty' : 'Nhân sự toàn công ty');
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -143,6 +188,34 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
       ),
       body: Column(
         children: [
+          // Lỗi tải dữ liệu: không được hiện "không có nhân sự" như thật.
+          if (_loadError != null)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF4E5),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFF5D9B5)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.wifi_off, size: 18, color: Color(0xFFB25E09)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _loadError!,
+                      style: const TextStyle(fontSize: 12, color: Color(0xFF8A4B08)),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _fetchStaffAttendance,
+                    child: const Text('Thử lại'),
+                  ),
+                ],
+              ),
+            ),
           // Tab bar
           Container(
             color: Colors.white,

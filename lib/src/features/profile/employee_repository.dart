@@ -17,18 +17,15 @@ class EmployeeRepository {
     return list.whereType<Map<String, dynamic>>().toList();
   }
 
-  /// Lấy chi tiết một nhân viên
+  /// Lấy chi tiết một nhân viên. Lỗi mạng/403 được ném lên để nơi gọi biết
+  /// dữ liệu chưa tải được (trả null sẽ bị hiểu nhầm là "không có hồ sơ").
   Future<Map<String, dynamic>?> getEmployee(String id) async {
-    try {
-      final res = await api.getJson('/api/employees/$id');
-      if (res is Map && res['data'] is Map<String, dynamic>) {
-        return (res['data'] as Map).cast<String, dynamic>();
-      }
-      if (res is Map<String, dynamic>) return res;
-      return null;
-    } catch (_) {
-      return null;
+    final res = await api.getJson('/api/employees/$id');
+    if (res is Map && res['data'] is Map<String, dynamic>) {
+      return (res['data'] as Map).cast<String, dynamic>();
     }
+    if (res is Map<String, dynamic>) return res;
+    return null;
   }
 
   /// Cập nhật thông tin nhân viên qua PUT /api/employees/:id

@@ -40,25 +40,28 @@ class AttendanceRepository {
     return AttendanceModel.fromJson(data);
   }
 
+  /// Đọc cấu hình chấm công. Lỗi mạng/403 KHÔNG được nuốt thành cấu hình rỗng
+  /// (màn sẽ hiện mặc định 5 phút / 60 phút như thật): lỗi được ném lên cho
+  /// tầng trên hiển thị.
   Future<Map<String, dynamic>> getConfig() async {
-    try {
-      final res = await api.getJson('/api/attendance/config');
-      if (res is Map<String, dynamic>) {
-        final d = res['data'];
-        if (d is Map<String, dynamic>) return d;
-        return res;
-      }
-    } catch (_) {}
+    final res = await api.getJson('/api/attendance/config');
+    if (res is Map<String, dynamic>) {
+      final d = res['data'];
+      if (d is Map<String, dynamic>) return d;
+      return res;
+    }
     return {};
   }
 
   Future<List<AttendanceModel>> getAttendance({
     String? employeeId,
     String? date,
+    String? branchSlug,
   }) async {
     final query = <String, String>{};
     if (employeeId != null) query['employeeId'] = employeeId;
     if (date != null) query['date'] = date;
+    if (branchSlug != null && branchSlug.isNotEmpty) query['branchSlug'] = branchSlug;
 
     final data = await api.getJson('/api/attendance', query: query);
     final List list = data is List ? data : [];

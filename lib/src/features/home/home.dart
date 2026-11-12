@@ -93,11 +93,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Avatar nằm ở organization-service chứ không có trong /api/auth/me, nên phải
-  /// đọc lại hồ sơ để ảnh sửa từ nơi khác vẫn hiện ở Trang chủ.
+  /// đọc lại hồ sơ để ảnh sửa từ nơi khác vẫn hiện ở Trang chủ. Lỗi đọc hồ sơ
+  /// không được làm hỏng màn Trang chủ.
   Future<void> _refreshAvatar() async {
     final me = currentUser;
     if (me.id.isEmpty) return;
-    final profile = await EmployeeRepository().getEmployee(me.id);
+    Map<String, dynamic>? profile;
+    try {
+      profile = await EmployeeRepository().getEmployee(me.id);
+    } catch (_) {
+      return;
+    }
     if (!mounted) return;
     final current = UserScope.currentUser(context);
     if (current == null || current.id != me.id) return;

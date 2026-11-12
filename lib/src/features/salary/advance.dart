@@ -37,6 +37,8 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
   double? _estimatedSalary;
   String? _lastUserId;
   String? _loadError;
+  // Lỗi riêng của phần dữ liệu lương (ước tính hạn mức tạm ứng).
+  String? _salaryError;
 
   void _showError(String message) {
     if (!mounted) return;
@@ -65,14 +67,25 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
           if (payslips.isEmpty) {
             _estimatedSalary = null;
           } else {
+            // Lấy phiếu kỳ MỚI NHẤT (API trả desc theo ngày cấp) để ước
+            // tính đúng kỳ, không dùng bản ghi bất kỳ trong danh sách.
             final p = payslips.first;
             final net = p.netSalary > 0 ? p.netSalary : p.baseSalary;
             _estimatedSalary = net > 0 ? net : null;
           }
+          _salaryError = null;
         });
       }
-    } catch (_) {
-      // Không có dữ liệu lương thì giữ null để hiển thị '—'.
+    } catch (e) {
+      // Lỗi mạng/403 không được hiện như "chưa có dữ liệu lương".
+      if (mounted) {
+        setState(() {
+          _estimatedSalary = null;
+          _salaryError = e is ApiException
+              ? e.message
+              : 'Không tải được dữ liệu lương. Kiểm tra kết nối hoặc thử lại.';
+        });
+      }
     }
   }
 
@@ -156,7 +169,7 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
                 hintText: _estimatedSalary != null
-                    ? 'Tối đa ${_formatCurrency((_estimatedSalary! / 2).round())}'
+                    ? 'Nhập số tiền muốn tạm ứng'
                     : 'Nhập số tiền muốn tạm ứng',
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -236,7 +249,7 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
     final String salaryText =
         _estimatedSalary != null ? _formatCurrency(_estimatedSalary!.toInt()) : '—';
     final String maxAdvanceText =
-        _estimatedSalary != null ? _formatCurrency((_estimatedSalary! / 2).round()) : '—';
+        _estimatedSalary != null ? _formatCurrency(_estimatedSalary!.toInt()) : '—';
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -293,7 +306,9 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Hạn mức được ứng tối đa (50%):', style: TextStyle(color: Colors.white, fontSize: 12.5)),
+                    // Hệ thống không áp dụng hạn mức 50% cho đơn tạm ứng nên
+                    // không được hiện con số hạn mức như thật.
+                    const Text('Lương ước tính kỳ gần nhất:', style: TextStyle(color: Colors.white, fontSize: 12.5)),
                     Text(maxAdvanceText, style: const TextStyle(color: Colors.amberAccent, fontSize: 14, fontWeight: FontWeight.bold)),
                   ],
                 ),
@@ -301,6 +316,31 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
             ),
           ),
           const SizedBox(height: 20),
+
+          // Lỗi tải dữ liệu lương: không được hiện "—" như thể chưa có lương.
+          if (_salaryError != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF4E5),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFF5D9B5)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.wifi_off, size: 18, color: Color(0xFFB25E09)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _salaryError!,
+                      style: const TextStyle(fontSize: 12, color: Color(0xFF8A4B08)),
+                    ),
+                  ),
+                  TextButton(onPressed: _fetchSalary, child: const Text('Thử lại')),
+                ],
+              ),
+            ),
 
           if (_records.isEmpty)
             Container(

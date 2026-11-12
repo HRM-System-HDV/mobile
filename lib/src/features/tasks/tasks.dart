@@ -35,6 +35,9 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
   List<Branch> _branchList = [];
   List<Map<String, dynamic>> _shiftTemplates = [];
   String? _tasksError;
+  // Lỗi tải danh mục (chi nhánh/khung ca/nhân sự) để dialog giao việc không
+  // hiện danh sách rỗng như thể không có dữ liệu thật.
+  String? _catalogError;
   bool _isLoading = true;
 
   final List<String> _tabs = [
@@ -70,23 +73,35 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
     try {
       final branches = await EmployeeRepository().getBranches();
       if (mounted) setState(() => _branchList = branches);
-    } catch (_) {}
+    } catch (e) {
+      _catalogError = e is ApiException ? e.message : 'Không tải được danh sách chi nhánh/khung ca';
+    }
 
     try {
       final templates = await ShiftRepository().getTemplates();
       if (mounted) setState(() => _shiftTemplates = templates);
-    } catch (_) {}
+    } catch (e) {
+      _catalogError = e is ApiException ? e.message : 'Không tải được danh sách chi nhánh/khung ca';
+    }
   }
 
   Future<void> _loadEmployees() async {
     try {
       final emps = await EmployeeRepository().getEmployees();
       if (mounted) {
-        setState(() => _employeeList = emps);
+        setState(() {
+          _employeeList = emps;
+          _catalogError = null;
+        });
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
-        setState(() => _employeeList = []);
+        setState(() {
+          _employeeList = [];
+          // Không được hiện "Chưa có dữ liệu nhân sự" như thể nhân sự thật
+          // không tồn tại: phải báo lỗi tải.
+          _catalogError = e is ApiException ? e.message : 'Không tải được danh sách nhân sự';
+        });
       }
     }
   }
@@ -905,7 +920,9 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                     initialValue: assignedPerson,
                     decoration: InputDecoration(
                       labelText: 'Người thực hiện (Nhân sự) *',
-                      hintText: _employeeList.isEmpty ? 'Chưa có dữ liệu nhân sự' : null,
+                      hintText: _employeeList.isEmpty
+                          ? (_catalogError ?? 'Chưa có dữ liệu nhân sự')
+                          : null,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                     items: _employeeList.map((e) {

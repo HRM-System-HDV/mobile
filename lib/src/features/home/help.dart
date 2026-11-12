@@ -15,7 +15,7 @@ class FaqHelpScreen extends StatelessWidget {
     FaqItem(
       question: 'Làm thế nào để chấm công Wi-Fi hợp lệ?',
       answer:
-          'Bạn cần kết nối điện thoại vào đúng mạng Wi-Fi của chi nhánh (VD: HRM_HN1_OFFICE). Khi vào tab Trang chủ, nút Chấm công sẽ chuyển sang trạng thái sẵn sàng. Chạm vào nút và chọn ca làm việc hôm nay để xác thực.',
+          'Bạn cần kết nối điện thoại vào mạng Wi-Fi của chi nhánh (VD: HRM_HN1_OFFICE). Khi bạn bấm nút Chấm công, ứng dụng đọc tên Wi-Fi (SSID) và mã mạng (BSSID) tại thời điểm đó rồi gửi kèm vào bản ghi chấm công. Lưu ý: hệ thống hiện chỉ GHI NHẬN thông tin Wi-Fi, chưa chặn chấm công khi Wi-Fi không khớp cấu hình chi nhánh.',
     ),
     FaqItem(
       question: 'Tôi quên bấm check-in hoặc check-out thì phải làm sao?',

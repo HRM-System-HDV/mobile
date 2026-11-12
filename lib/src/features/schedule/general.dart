@@ -145,10 +145,17 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
         _empRepo.getEmployees(),
         _shiftRepo.getShifts(branchSlug: branch?.slug),
         _shiftRepo.getTemplates(),
-        _attRepo.getConfig(),
       ]);
+      // Cấu hình chấm công là dữ liệu phụ: lỗi đọc cấu hình không được làm hỏng
+      // cả màn lịch, nhưng vẫn phải báo ra chứ không lặng lẽ dùng mặc định.
+      Map<String, dynamic> cfg = {};
+      String? configError;
+      try {
+        cfg = await _attRepo.getConfig();
+      } catch (e) {
+        configError = e is ApiException ? e.message : 'Không đọc được cấu hình chấm công';
+      }
       if (!mounted) return;
-      final cfg = results[3] as Map<String, dynamic>;
       final grace = cfg['gracePeriodMinutes'];
       final window = cfg['checkoutWindowMinutes'];
       setState(() {
@@ -158,7 +165,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
         if (grace is int) _gracePeriodMinutes = grace;
         // API cũ chưa trả trường này thì giữ 60 phút theo mặc định backend.
         if (window is int) _checkoutWindowMinutes = window;
-        _loadError = null;
+        _loadError = configError;
       });
     } catch (e) {
       if (!mounted) return;
