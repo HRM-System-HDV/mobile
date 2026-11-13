@@ -38,14 +38,13 @@ class UploadService {
   }
 
   /// Tải chuỗi Data URL (data:image/...;base64,...) lên lưu trữ nội bộ qua API Gateway.
+  /// Body `POST /api/upload` chỉ nhận file|dataUrl|base64|image, folder, regulationId.
   Future<String> uploadDataUrl(String dataUrl, {String folder = 'hrm'}) async {
     final res = await _api.postJson('/api/upload', {
       'file': dataUrl,
       'folder': folder,
     });
-    final Map<String, dynamic> data = (res is Map && res['data'] is Map)
-        ? (res['data'] as Map).cast<String, dynamic>()
-        : (res is Map ? res.cast<String, dynamic>() : <String, dynamic>{});
+    final data = res is Map<String, dynamic> ? res : const <String, dynamic>{};
     final url = data['url']?.toString() ?? '';
     if (url.isEmpty) {
       throw Exception('Không nhận được đường dẫn ảnh từ máy chủ');

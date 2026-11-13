@@ -88,7 +88,7 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
           }
           final emp = empMap[m.employeeId];
           final name = emp?['name']?.toString() ?? 'Nhân sự #${m.employeeId}';
-          final role = emp?['role']?.toString() ?? (m.branchSlug ?? 'Nhân viên');
+          final role = emp?['role']?.toString() ?? 'Nhân viên';
           final avatar = name.trim().split(' ').where((s) => s.isNotEmpty).map((s) => s[0]).take(2).join().toUpperCase();
 
           return ShiftRequest(

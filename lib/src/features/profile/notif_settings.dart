@@ -97,7 +97,7 @@ class _NotificationSettingsScreenState extends State<NotificationSettingsScreen>
     if (!mounted) return;
     NotificationSettingsCache.setLocal(key, value);
     // Áp dụng ngay: lên lịch lại nhắc ca / đổi kênh âm thanh-rung.
-    ShiftReminders.reschedule(employeeId: UserScope.currentUser(context)?.id);
+    ShiftReminders.reschedule(employeeId: UserScope.currentUser(context)?.employeeId);
     _showSavedToast(label, value);
   }
 

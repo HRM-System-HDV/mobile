@@ -130,12 +130,16 @@ void main() {
       mock.getJsonResponse = [
         'not_a_map',
         42,
-        {'id': 'shift-ok', 'date': '2026-11-20', 'template': 'Morning', 'scheduledStart': '08:00', 'scheduledEnd': '12:00'}
+        {'id': 'shift-ok', 'workDate': '2026-11-20', 'templateId': 'tpl-morning', 'scheduledStart': '08:00', 'scheduledEnd': '12:00'}
       ];
-      shifts = await repo.getShifts(date: '2026-11-20');
+      // work-service từ chối DD/MM/YYYY: repository phải chuẩn hoá về ISO.
+      shifts = await repo.getShifts(workDate: '20/11/2026');
       expect(shifts.length, 1);
       expect(shifts.first.id, 'shift-ok');
-      expect(mock.requests.last.query?['date'], '20/11/2026');
+      expect(shifts.first.workDate, '2026-11-20');
+      expect(shifts.first.templateId, 'tpl-morning');
+      expect(mock.requests.last.query?['workDate'], '2026-11-20');
+      expect(mock.requests.last.query?.containsKey('date'), isFalse);
     });
 
     test('AttendanceRepository: checkIn payload fidelity and error handling', () async {
@@ -146,8 +150,8 @@ void main() {
         'id': 'att-100',
         'employeeId': 'emp-1',
         'shiftId': 's-1',
-        'date': '20-11-2026',
-        'checkIn': '07:55',
+        'workDate': '2026-11-20',
+        'checkIn': '2026-11-20T07:55:00.000Z',
         'status': 'present',
       };
 
@@ -156,18 +160,24 @@ void main() {
         shiftId: 's-1',
         wifiSsid: 'Corp_WiFi',
         wifiBssid: 'AA:BB:CC:11:22:33',
-        checkinTime: '07:55',
       );
 
       expect(att.id, 'att-100');
-      expect(mock.requests.first.payload?['wifiBssid'], 'AA:BB:CC:11:22:33');
+      expect(att.workDate, '2026-11-20');
+      // work-service: fields(payload, ["employeeId", "shiftId", "wifi"]) — đúng 3 khóa.
+      expect(mock.requests.first.payload!.keys.toSet(),
+          {'employeeId', 'shiftId', 'wifi'});
+      expect(mock.requests.first.payload?['wifi'],
+          {'ssid': 'Corp_WiFi', 'bssid': 'AA:BB:CC:11:22:33'});
 
-      // Minimal checkin: wifi params omitted
+      // Minimal checkin: wifi object rỗng, không có khóa rời
       mock.reset();
-      mock.postJsonResponse = {'id': 'att-101', 'employeeId': 'emp-1', 'shiftId': 's-2', 'date': '20-11-2026'};
+      mock.postJsonResponse = {'id': 'att-101', 'employeeId': 'emp-1', 'shiftId': 's-2', 'workDate': '2026-11-20'};
       await repo.checkIn(employeeId: 'emp-1', shiftId: 's-2');
       expect(mock.requests.first.payload?.containsKey('wifiBssid'), false);
       expect(mock.requests.first.payload?.containsKey('wifiSsid'), false);
+      expect(mock.requests.first.payload?['wifi'], isEmpty);
+      expect(mock.requests.first.payload?.containsKey('checkinTime'), isFalse);
 
       // getConfig nổ lỗi khi server lỗi: lỗi phải được báo ra chứ không lặng
       // lẽ trả cấu hình rỗng.
@@ -229,30 +239,69 @@ void main() {
       expect(tasks[2].status, TaskStatus.pending);
       expect(tasks[2].priority, TaskPriority.normal);
 
-      // updateTaskStatus adds completedAt when status is completed
+      // updateTaskStatus: backend tự set completedAt/photoSubmittedAt/
+      // photoSubmittedBy, client chỉ được gửi status + proofPhotoUrl (TASK_FIELDS).
       mock.reset();
       mock.putJsonResponse = {'ok': true};
-      await repo.updateTaskStatus('t-1', 'completed', proofUrl: 'http://cdn/photo.jpg', photoSubmittedBy: 'emp-1');
+      await repo.updateTaskStatus('t-1', 'completed', proofUrl: 'http://cdn/photo.jpg');
       final payload = mock.requests.first.payload!;
-      expect(payload['status'], 'completed');
+      expect(payload.keys.toSet(), {'status', 'proofPhotoUrl'});
+      expect(payload['status'], 'done',
+          reason: 'work-service lưu "done", không phải "completed"');
       expect(payload['proofPhotoUrl'], 'http://cdn/photo.jpg');
-      expect(payload['photoSubmittedBy'], 'emp-1');
-      expect(payload.containsKey('completedAt'), true);
-      expect(payload.containsKey('photoSubmittedAt'), true);
+      expect(payload.containsKey('completedAt'), isFalse,
+          reason: 'completedAt do server đặt, gửi lên là key thừa -> 400');
+      expect(payload.containsKey('photoSubmittedAt'), isFalse);
+      expect(payload.containsKey('photoSubmittedBy'), isFalse);
+      expect(mock.requests.first.path, '/api/tasks/t-1');
+
+      // Đang làm việc thì gửi "in_progress" (không có ảnh minh chứng).
+      mock.reset();
+      await repo.updateTaskStatus('t-2', 'inProgress');
+      expect(mock.requests.first.payload, {'status': 'in_progress'});
     });
 
-    test('WifiConfigRepository: encodes Vietnamese branch query parameter and maps CRUD', () async {
+    test('WifiConfigRepository: lọc theo branchId UUID và ghi đúng 4 khóa CRUD', () async {
       final repo = WifiConfigRepository(api: mock);
 
       mock.getJsonResponse = [];
-      await repo.getWifiConfigs(branch: 'Quận 1 - Chi nhánh chính');
-      expect(mock.requests.first.path, '/api/wifi-configs?branch=Qu%E1%BA%ADn%201%20-%20Chi%20nh%C3%A1nh%20ch%C3%ADnh');
+      // Không còn endpoint /scan và không còn bộ lọc tên chi nhánh: chỉ có
+      // GET /api/wifi-configs?branchId=<UUID>.
+      await repo.getWifiConfigs(branchId: '2f7c1f3a-9c1e-4f6a-9a3b-1d2c3f4a5b61');
+      expect(mock.requests.length, 1);
+      expect(mock.requests.first.method, 'GET');
+      expect(mock.requests.first.path, '/api/wifi-configs');
+      expect(mock.requests.first.query, {
+        'branchId': '2f7c1f3a-9c1e-4f6a-9a3b-1d2c3f4a5b61'
+      });
+      expect(mock.requests.first.query?.containsKey('branch'), isFalse);
 
       mock.reset();
-      mock.postJsonResponse = {'id': 'w-1', 'ssid': 'Test', 'bssid': '00:11:22:33:44:55', 'branch': 'q1', 'status': 'active'};
-      final created = await repo.createWifiConfig(ssid: 'Test', bssid: '00:11:22:33:44:55', branch: 'q1');
+      mock.postJsonResponse = {
+        'id': 'w-1',
+        'ssid': 'Test',
+        'bssid': '00:11:22:33:44:55',
+        'branchId': '2f7c1f3a-9c1e-4f6a-9a3b-1d2c3f4a5b61',
+        'status': 'hoạt động',
+      };
+      final created = await repo.createWifiConfig(
+        ssid: 'Test',
+        bssid: '00:11:22:33:44:55',
+        branchId: '2f7c1f3a-9c1e-4f6a-9a3b-1d2c3f4a5b61',
+      );
       expect(created.id, 'w-1');
+      expect(created.branchId, '2f7c1f3a-9c1e-4f6a-9a3b-1d2c3f4a5b61');
       expect(mock.requests.first.method, 'POST');
+      expect(mock.requests.first.path, '/api/wifi-configs');
+      // contentFields.wifiConfig = ssid, bssid, branchId, status — thêm khóa là 400.
+      expect(mock.requests.first.payload!.keys.toSet(),
+          {'ssid', 'bssid', 'branchId', 'status'});
+      expect(mock.requests.first.payload, {
+        'ssid': 'Test',
+        'bssid': '00:11:22:33:44:55',
+        'branchId': '2f7c1f3a-9c1e-4f6a-9a3b-1d2c3f4a5b61',
+        'status': 'hoạt động',
+      });
     });
   });
 
@@ -439,9 +488,44 @@ void main() {
       expect(modelBool.metadata, isNull);
     });
 
-    test('shift metadata aliased fallbacks: supports snake_case and short names', () {
+    test('chi tiết ca lấy từ metadata; branchId là cột, không còn branchSlug', () {
+      const branchId = '2f7c1f3a-9c1e-4f6a-9a3b-1d2c3f4a5b61';
       final json = <String, dynamic>{
-        'id': 'n-alias',
+        'id': 'n-meta',
+        'title': 'Yêu cầu làm thay',
+        'body': 'Cần người làm thay',
+        'branchId': branchId,
+        'requestType': 'cover',
+        'requestId': 'req-9',
+        'senderName': 'Trần Văn B',
+        'metadata': {
+          'shiftName': 'Ca Tối 18h-22h',
+          'shiftDate': '20/11/2026',
+          'shiftTime': '18:00 - 22:00',
+          'shiftHours': '4.0',
+          'senderRole': 'Pha chế',
+          'senderPhone': '0901234567',
+        },
+      };
+      final model = AppNotificationModel.fromJson(json);
+      expect(model.branchId, branchId);
+      expect(model.requestType, 'cover');
+      expect(model.requestId, 'req-9');
+      expect(model.shiftName, 'Ca Tối 18h-22h');
+      expect(model.shiftDate, '20/11/2026');
+      expect(model.shiftTime, '18:00 - 22:00');
+      expect(model.shiftHours, '4.0');
+      expect(model.senderName, 'Trần Văn B');
+      expect(model.senderRole, 'Pha chế');
+      expect(model.senderPhone, '0901234567');
+    });
+
+    test('metadata thiếu/rỗng thì các trường chi tiết là null, không suy từ top-level', () {
+      // integration-service chỉ pick targetEmployeeId, branchId, title, body,
+      // metadata, requestId, requestType — mọi alias kiểu cũ ('shift', 'date',
+      // 'role', 'phone'...) chưa bao giờ là cột nên không được đọc nữa.
+      final legacy = AppNotificationModel.fromJson(<String, dynamic>{
+        'id': 'n-legacy',
         'title': 'Yêu cầu làm thay',
         'body': 'Cần người làm thay',
         'branch': 'q1',
@@ -453,17 +537,26 @@ void main() {
         'sender': 'Trần Văn B',
         'role': 'Pha chế',
         'phone': '0901234567',
-      };
-      final model = AppNotificationModel.fromJson(json);
-      expect(model.branchSlug, 'q1');
-      expect(model.requestType, 'cover');
-      expect(model.shiftName, 'Ca Tối 18h-22h');
-      expect(model.shiftDate, '20/11/2026');
-      expect(model.shiftTime, '18:00 - 22:00');
-      expect(model.shiftHours, '4.0');
-      expect(model.senderName, 'Trần Văn B');
-      expect(model.senderRole, 'Pha chế');
-      expect(model.senderPhone, '0901234567');
+      });
+      expect(legacy.branchId, isNull);
+      expect(legacy.requestType, isNull);
+      expect(legacy.shiftName, isNull);
+      expect(legacy.shiftDate, isNull);
+      expect(legacy.shiftTime, isNull);
+      expect(legacy.shiftHours, isNull);
+      expect(legacy.senderName, isNull);
+      expect(legacy.senderRole, isNull);
+      expect(legacy.senderPhone, isNull);
+
+      // Giá trị rỗng trong metadata được coi là "không có" chứ không phải ''.
+      final blank = AppNotificationModel.fromJson({
+        'id': 'n-blank',
+        'title': 'T',
+        'body': 'B',
+        'metadata': {'shiftName': '   ', 'senderPhone': null},
+      });
+      expect(blank.shiftName, isNull);
+      expect(blank.senderPhone, isNull);
     });
 
     test('isRead parsing: strict boolean check', () {
@@ -474,40 +567,49 @@ void main() {
       expect(AppNotificationModel.fromJson({'id': '5', 'isRead': 1}).isRead, isFalse);
     });
 
-    test('toJson round-trips all metadata fields correctly', () {
+    test('toJson chỉ ghi các cột thật và giữ nguyên metadata cho vòng sau', () {
       const original = AppNotificationModel(
         id: 'notif-rt',
         targetEmployeeId: 'emp-101',
-        branchSlug: 'q1',
+        branchId: '2f7c1f3a-9c1e-4f6a-9a3b-1d2c3f4a5b61',
         title: 'Title RT',
         body: 'Body RT',
         isRead: true,
-        metadata: {'type': 'swap', 'priority': 1},
+        metadata: {
+          'shiftName': 'Ca Sáng',
+          'shiftDate': '21/11/2026',
+          'senderRole': 'Phục vụ',
+          'senderPhone': '0912345678',
+        },
         requestType: 'swap',
-        shiftName: 'Ca Sáng',
-        shiftDate: '21/11/2026',
-        shiftTime: '08:00 - 12:00',
-        shiftHours: '4.0',
         senderName: 'Lê Văn C',
-        senderRole: 'Phục vụ',
-        senderPhone: '0912345678',
         createdAt: '2026-11-20T10:00:00Z',
       );
 
       final map = original.toJson();
       expect(map['id'], 'notif-rt');
-      expect(map['metadata'], {'type': 'swap', 'priority': 1});
+      expect(map['branchId'], '2f7c1f3a-9c1e-4f6a-9a3b-1d2c3f4a5b61');
+      expect(map['metadata'], {
+        'shiftName': 'Ca Sáng',
+        'shiftDate': '21/11/2026',
+        'senderRole': 'Phục vụ',
+        'senderPhone': '0912345678',
+      });
       expect(map['requestType'], 'swap');
-      expect(map['shiftName'], 'Ca Sáng');
-      expect(map['shiftDate'], '21/11/2026');
-      expect(map['senderPhone'], '0912345678');
+      // Trường hiển thị không được thành khóa top-level (bảng notifications không có).
+      expect(map.containsKey('shiftName'), isFalse);
+      expect(map.containsKey('senderPhone'), isFalse);
 
       final reconstructed = AppNotificationModel.fromJson(map);
       expect(reconstructed.id, original.id);
+      expect(reconstructed.branchId, original.branchId);
       expect(reconstructed.isRead, isTrue);
-      expect(reconstructed.metadata?['type'], 'swap');
       expect(reconstructed.requestType, original.requestType);
       expect(reconstructed.senderName, original.senderName);
+      expect(reconstructed.shiftName, 'Ca Sáng');
+      expect(reconstructed.shiftDate, '21/11/2026');
+      expect(reconstructed.senderRole, 'Phục vụ');
+      expect(reconstructed.senderPhone, '0912345678');
     });
   });
 }

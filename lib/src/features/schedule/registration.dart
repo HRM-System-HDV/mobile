@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
-import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
-import '../../core/widgets/branch_selector.dart';
 import '../../core/widgets/week_strip.dart';
 import '../../core/utils/date_format.dart';
 import 'shift_repository.dart';
@@ -65,14 +63,10 @@ class DayShiftRegistration {
 class WeekRegistrationData {
   final String weekLabel;
   final List<DayShiftRegistration> days;
-  String? note;
-  bool noteSent;
 
   WeekRegistrationData({
     required this.weekLabel,
     required this.days,
-    this.note,
-    this.noteSent = false,
   });
 }
 
@@ -92,6 +86,10 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
 
   // Cache dữ liệu tuần
   final Map<int, WeekRegistrationData> _weekDataCache = {};
+
+  // Mã đăng ký (shiftRegistrations.id) theo "ngày|templateId" — cần cho
+  // DELETE /api/shifts/registrations/:id khi hủy nguyện vọng.
+  final Map<String, String> _registrationIds = {};
 
   DateTime get _today {
     final now = DateTime.now();
@@ -165,7 +163,7 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
   Future<void> _loadRemoteRegistrations() async {
     try {
       final user = UserScope.currentUser(context);
-      final empId = user?.id ?? '';
+      final empId = user?.employeeId ?? '';
       final repo = ShiftRepository();
       try {
         final tpls = await repo.getTemplates();
@@ -209,15 +207,17 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
         for (final day in weekData.days) {
           day.selectedShiftIds.clear();
         }
+        _registrationIds.clear();
         for (final r in regs) {
-          final pref = r['preference']?.toString() ?? r['week']?.toString() ?? '';
-          final shiftId = r['shiftId']?.toString() ?? '';
-          if (shiftId != 'preference_note' && shiftId.isNotEmpty && shiftId != 'off') {
-            for (final day in weekData.days) {
-              if (_isSameDay(pref, day.dateStr) ||
-                  pref.contains(day.dateStr) ||
-                  day.shortKey.toUpperCase() == pref.toUpperCase()) {
-                day.selectedShiftIds.add(shiftId);
+          final templateId = r['templateId']?.toString() ?? '';
+          final regDate = toVnDate(r['registerDate']?.toString() ?? '');
+          final id = r['id']?.toString() ?? '';
+          if (templateId.isEmpty || templateId == 'off') continue;
+          for (final day in weekData.days) {
+            if (_isSameDay(regDate, day.dateStr)) {
+              day.selectedShiftIds.add(templateId);
+              if (id.isNotEmpty) {
+                _registrationIds['${day.dateStr}|$templateId'] = id;
               }
             }
           }
@@ -236,7 +236,8 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
     }
   }
 
-  /// So khớp ngày đăng ký cũ (dd/MM) và mới (DD/MM/YYYY) với một ngày của tuần.
+  /// So khớp ngày đăng ký (registerDate đã chuẩn hóa DD/MM/YYYY) với một ngày
+  /// của tuần đang xem.
   bool _isSameDay(String a, String b) {
     final da = parseVnDate(a);
     final db = parseVnDate(b);
@@ -256,16 +257,15 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
 
   Future<void> _onToggleShift(DayShiftRegistration day, ShiftOption shift) async {
     final user = UserScope.currentUser(context);
-    final empId = user?.id ?? '';
-    final branch = BranchScope.selectedBranch(context);
-    final branchSlug = branch?.slug ?? user?.branchSlug ?? user?.assignedBranchId;
+    final empId = user?.employeeId ?? '';
     final isCurrentlyRegistered = day.isShiftSelected(shift.id);
+    final regKey = '${day.dateStr}|${shift.id}';
 
     if (empId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: AppColors.error,
-          content: Text('❌ Không xác định được tài khoản, vui lòng đăng nhập lại'),
+          content: Text('❌ Không xác định được nhân viên, vui lòng đăng nhập lại'),
         ),
       );
       return;
@@ -274,18 +274,35 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
     // Chỉ đổi trạng thái ô chọn khi server đã ghi nhận, không báo trước thành công.
     try {
       if (isCurrentlyRegistered) {
-        await ShiftRepository().unregisterShift(
-          employeeId: empId,
-          shiftId: shift.id,
-          preference: day.dateStr,
-        );
+        final id = _registrationIds[regKey];
+        if (id == null || id.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: AppColors.error,
+              content: Text('❌ Không tìm thấy đăng ký để hủy, vui lòng tải lại'),
+            ),
+          );
+          return;
+        }
+        await ShiftRepository().deleteRegistration(id);
+        _registrationIds.remove(regKey);
       } else {
         await ShiftRepository().registerShift(
           employeeId: empId,
-          shiftId: shift.id,
-          preference: day.dateStr,
-          branchSlug: branchSlug,
+          templateId: shift.id,
+          registerDate: day.dateStr,
         );
+        final created = await ShiftRepository().getRegistrations(
+          employeeId: empId,
+          registerDate: day.dateStr,
+        );
+        final createdId = created
+            .where((r) => r['templateId']?.toString() == shift.id)
+            .firstOrNull?['id']
+            ?.toString();
+        if (createdId != null && createdId.isNotEmpty) {
+          _registrationIds[regKey] = createdId;
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -384,9 +401,6 @@ class _ScheduleRegistrationScreenState extends State<ScheduleRegistrationScreen>
           icon: const FaIcon(FontAwesomeIcons.chevronLeft, size: 18, color: AppColors.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
-        actions: const [
-          BranchSelector(includeAll: true),
-        ],
       ),
       body: Column(
         children: [

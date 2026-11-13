@@ -1,28 +1,31 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobile/src/core/models/user.dart';
 import 'package:mobile/src/core/network/api_client.dart';
 import 'package:mobile/src/features/auth/auth_repository.dart';
 
 // Test đấu API thật: cần identity (4001) + gateway (4000) đang chạy.
 // Bỏ qua khi không có server để không làm đỏ CI.
 void main() {
-  test('login + me thật qua gateway', () async {
+  tearDown(() => ApiClient.clearSession());
+
+  test('login + me thật qua gateway: chỉ dùng Authorization: Bearer', () async {
     final api = ApiClient(baseUrl: 'http://localhost:4000');
-    late Map<String, dynamic> user;
+    final repo = AuthRepository(api: api);
+    late UserModel logged;
     try {
-      final data = await api.postJson('/api/auth/login', {
-        'email': 'admin@company.com',
-        'password': '123456',
-      });
-      user = (data as Map)['user'] as Map<String, dynamic>;
+      logged = await repo.login('admin@company.com', '123456');
     } catch (_) {
       markTestSkipped('Gateway/identity chưa chạy, bỏ qua test live');
       return;
     }
-    expect(user['email'], 'admin@company.com');
-    expect(user['role'], 'admin');
+    expect(logged.email, 'admin@company.com');
+    // systemRole là nguồn quyết định vai trò, role chỉ là fallback.
+    expect(logged.role, 'admin');
+    expect(logged.id.isNotEmpty, isTrue);
 
-    final repo = AuthRepository(api: api);
     final me = await repo.me();
     expect(me?.email, 'admin@company.com');
+    expect(me?.id, logged.id);
+    expect(me?.employeeId, logged.employeeId);
   });
 }

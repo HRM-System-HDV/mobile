@@ -9,8 +9,9 @@ import 'package:mobile/src/features/schedule/staff_detail.dart';
 
 import 'repositories/mock_api_client.dart';
 
-/// Một dòng ca đã check-in nhưng quá hạn chốt ra: backend chiếu status 'missed'
-/// và giữ checkOut = null nên ca không được tính công.
+/// Một dòng ca đã check-in nhưng quá hạn chốt ra: `attendanceState` của
+/// work-service là 'missed_checkout' (WorkService.js:157) và backend giữ
+/// checkOut = null nên ca không được tính công.
 StaffInShift _missedStaff() => const StaffInShift(
       id: 'emp-1',
       name: 'Nguyễn Văn A',
@@ -20,7 +21,7 @@ StaffInShift _missedStaff() => const StaffInShift(
       checkOutTime: '',
       phone: '0900000000',
       shiftId: 'shift-row-1',
-      attendanceStatus: 'missed',
+      attendanceStatus: 'missed_checkout',
     );
 
 GeneralShiftModel _shift(StaffInShift staff) => GeneralShiftModel(
@@ -40,7 +41,6 @@ UserModel _user({required String role, String? name}) => UserModel(
       name: name ?? (role == 'staff' ? 'Nguyễn Văn A' : 'Người quản lý'),
       email: '$role@test.local',
       role: role,
-      roleTitle: role,
     );
 
 /// Bọc màn chi tiết trong UserScope để [UserScope.canManage] đọc đúng vai trò.
@@ -135,14 +135,15 @@ void main() {
     await tester.tap(find.text('Xác nhận Ra ca'));
     await tester.pump();
 
-    // Payload: chốt hộ bằng check-out thường, bắt buộc có shiftId dòng ca,
-    // không gửi attendanceId (dễ đóng nhầm bản ghi khác).
+    // Payload: chốt hộ bằng check-out thường. work-service chỉ chấp nhận
+    // employeeId/shiftId/wifi; giờ ra do server lấy Time.now, nên gửi thêm
+    // checkoutTime hay attendanceId đều bị từ chối.
     final req = mockApi.requests.last;
     expect(req.path, '/api/attendance/checkout');
     expect(req.payload?['employeeId'], 'emp-1');
     expect(req.payload?['shiftId'], 'shift-row-1');
     expect(req.payload?.containsKey('attendanceId'), isFalse);
-    expect(req.payload?['checkoutTime'], matches(RegExp(r'^\d{2}:\d{2}$')));
+    expect(req.payload?.containsKey('checkoutTime'), isFalse);
 
     // Message của backend (envelope error.message) hiện nguyên văn, không tự chế.
     expect(find.text(backendMsg), findsOneWidget);

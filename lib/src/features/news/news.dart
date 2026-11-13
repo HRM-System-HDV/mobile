@@ -94,12 +94,11 @@ class _NewsScreenState extends State<NewsScreen> {
     }
   }
 
-  /// Ánh xạ slug chi nhánh của tin về tên hiển thị từ `_branches` đã nạp;
-  /// không map được thì giữ nguyên chuỗi gốc.
+  /// `branch` của tin là MÃ chi nhánh (UUID) do backend trả; ánh xạ về tên hiển
+  /// thị từ `_branches` đã nạp, không map được thì giữ nguyên chuỗi gốc.
   String _branchDisplayName(String raw) {
-    final lower = raw.toLowerCase();
     for (final b in _branches) {
-      if (b.slug.toLowerCase() == lower || b.code.toLowerCase() == lower) {
+      if (b.id == raw || b.branchCode.toLowerCase() == raw.toLowerCase()) {
         return b.name;
       }
     }
@@ -296,8 +295,8 @@ class _NewsScreenState extends State<NewsScreen> {
                   items: [
                     const DropdownMenuItem(value: 'Toàn công ty', child: Text('🏢 Toàn công ty')),
                     ..._branches.map((b) => DropdownMenuItem(
-                          value: b.code.toUpperCase(),
-                          child: Text('🏬 Chi nhánh ${b.name} (${b.code.toUpperCase()})'),
+                          value: b.id,
+                          child: Text('🏬 Chi nhánh ${b.name} (${b.branchCode})'),
                         )),
                   ],
                   onChanged: (val) {
@@ -361,22 +360,14 @@ class _NewsScreenState extends State<NewsScreen> {
                       return;
                     }
 
-                    String tagTone = 'primary';
-                    if (selectedTag == 'Khẩn cấp') tagTone = 'danger';
-                    if (selectedTag == 'Nghỉ lễ') tagTone = 'danger';
-                    if (selectedTag == 'Khen thưởng') tagTone = 'warning';
-                    if (selectedTag == 'Vận hành') tagTone = 'success';
-
                     try {
                       final created = await _newsRepo.createNews(
                         title: titleCtrl.text.trim(),
                         content: contentCtrl.text.trim(),
                         summary: summaryCtrl.text.trim().isNotEmpty ? summaryCtrl.text.trim() : null,
                         tag: selectedTag,
-                        tagTone: tagTone,
                         pinned: isPinned,
-                        branch: selectedBranch,
-                        author: '${widget.currentUser.name} (${widget.currentUser.roleTitle})',
+                        branchId: selectedBranch == 'Toàn công ty' ? null : selectedBranch,
                       );
 
                       if (sheetCtx.mounted) Navigator.pop(sheetCtx);

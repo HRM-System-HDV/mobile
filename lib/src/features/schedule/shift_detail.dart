@@ -101,7 +101,6 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
 
     final user = UserScope.currentUser(context);
     final bool isHourly = user?.isHourlySalary ?? true;
-    final double? hourlySalary = user?.hourlySalary;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -246,7 +245,7 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
                       FontAwesomeIcons.moneyBillWave,
                       'Cơ chế tính lương',
                       isHourly
-                          ? 'Theo giờ (${hourlySalary != null && hourlySalary > 0 ? _formatCurrency(hourlySalary) : '—'} ₫/h)'
+                          ? 'Theo giờ'
                           : 'Lương cơ bản tháng',
                     ),
                     _divider(),

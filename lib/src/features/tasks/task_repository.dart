@@ -6,7 +6,7 @@ class ApiTaskModel {
   final String id;
   final String title;
   final String? description;
-  final String? branchSlug;
+  final String? branchId;
   final String? status;
   final String? priority;
   final String? dueDate;
@@ -20,12 +20,14 @@ class ApiTaskModel {
   final String? assignedToEmail;
   final String? assignedToName;
   final String? completedAt;
+  final String? templateId;
+  final String? workDate;
 
   const ApiTaskModel({
     required this.id,
     required this.title,
     this.description,
-    this.branchSlug,
+    this.branchId,
     this.status,
     this.priority,
     this.dueDate,
@@ -39,19 +41,21 @@ class ApiTaskModel {
     this.assignedToEmail,
     this.assignedToName,
     this.completedAt,
+    this.templateId,
+    this.workDate,
   });
 
   factory ApiTaskModel.fromJson(Map<String, dynamic> j) => ApiTaskModel(
         id: j['id']?.toString() ?? '',
         title: j['title']?.toString() ?? '',
         description: j['description']?.toString(),
-        branchSlug: j['branchSlug']?.toString(),
+        branchId: j['branchId']?.toString(),
         status: j['status']?.toString(),
         priority: j['priority']?.toString(),
         dueDate: j['dueDate']?.toString(),
-        assigneeId: j['assigneeId']?.toString() ?? j['assignedTo']?.toString(),
+        assigneeId: j['assignedTo']?.toString(),
         createdAt: j['createdAt']?.toString(),
-        proofUrl: j['proofUrl']?.toString() ?? j['proofPhotoUrl']?.toString(),
+        proofUrl: j['proofPhotoUrl']?.toString(),
         requirePhoto: j['requirePhoto'] == true,
         sourceType: j['sourceType']?.toString(),
         assignedByName: j['assignedByName']?.toString(),
@@ -59,6 +63,8 @@ class ApiTaskModel {
         assignedToEmail: j['assignedToEmail']?.toString(),
         assignedToName: j['assignedToName']?.toString(),
         completedAt: j['completedAt']?.toString(),
+        templateId: j['templateId']?.toString(),
+        workDate: j['workDate']?.toString(),
       );
 
   TaskModel toTaskModel() {
@@ -94,7 +100,7 @@ class ApiTaskModel {
       sourceType: isShift ? TaskSourceType.shift : TaskSourceType.manager,
       assignedByName: assignedByName ?? '—',
       shiftName: shiftName,
-      branch: branchSlug ?? '',
+      branch: branchId ?? '',
       dueDate: parsedDueDate,
       status: st,
       priority: pri,
@@ -112,11 +118,11 @@ class TaskRepository {
   final ApiClient api;
   TaskRepository({ApiClient? api}) : api = api ?? ApiClient();
 
-  Future<List<TaskModel>> getTasks({String? branchSlug, String? status, String? assigneeId}) async {
+  Future<List<TaskModel>> getTasks({String? status, String? assigneeId, String? workDate}) async {
     final query = <String, String>{};
-    if (branchSlug != null && branchSlug.isNotEmpty) query['branchSlug'] = branchSlug;
     if (status != null && status.isNotEmpty) query['status'] = status;
     if (assigneeId != null && assigneeId.isNotEmpty) query['assignedTo'] = assigneeId;
+    if (workDate != null && workDate.isNotEmpty) query['workDate'] = workDate;
 
     final data = await api.getJson('/api/tasks', query: query);
     final List list = data is List ? data : [];
@@ -127,46 +133,51 @@ class TaskRepository {
         .toList();
   }
 
+  /// Body chỉ được chứa đúng TASK_FIELDS của work-service; mọi key thừa đều 400.
+  /// Việc cá nhân gửi `assignedTo` (employeeId UUID) — backend tự suy ra branchId.
+  /// Việc chung để `assignedTo: null` kèm bắt buộc `branchId` + `templateId` + `workDate`.
   Future<void> createTask({
     required String title,
     String? description,
-    required String branchSlug,
+    String? assigneeId,
+    String? branchId,
+    String? templateId,
+    String? workDate,
     String status = 'pending',
     String priority = 'normal',
     String? dueDate,
-    String? assigneeId,
-    String? sourceType,
-    String? assignedByName,
-    String? shiftName,
-    String? assignedToEmail,
-    String? assignedToName,
     bool requirePhoto = false,
   }) async {
+    final isShared = assigneeId == null || assigneeId.isEmpty;
     await api.postJson('/api/tasks', {
       'title': title,
-      'description': description ?? '',
-      'branchSlug': branchSlug,
+      if (description != null) 'description': description,
+      'assignedTo': isShared ? null : assigneeId,
+      if (isShared) 'branchId': branchId,
+      if (isShared) 'templateId': templateId,
+      if (isShared) 'workDate': workDate,
       'status': status,
       'priority': priority,
       if (dueDate != null) 'dueDate': dueDate,
-      if (assigneeId != null) 'assignedTo': assigneeId,
-      if (sourceType != null) 'sourceType': sourceType,
-      if (assignedByName != null) 'assignedByName': assignedByName,
-      if (shiftName != null) 'shiftName': shiftName,
-      if (assignedToEmail != null) 'assignedToEmail': assignedToEmail,
-      if (assignedToName != null) 'assignedToName': assignedToName,
       'requirePhoto': requirePhoto,
     });
   }
 
-  Future<void> updateTaskStatus(String id, String status, {String? proofUrl, String? photoSubmittedBy}) async {
-    final nowVn = vnDateTime(DateTime.now());
+  static String apiStatus(String status) {
+    switch (status) {
+      case 'completed':
+        return 'done';
+      case 'inProgress':
+        return 'in_progress';
+      default:
+        return status;
+    }
+  }
+
+  Future<void> updateTaskStatus(String id, String status, {String? proofUrl}) async {
     await api.putJson('/api/tasks/$id', {
-      'status': status,
+      'status': apiStatus(status),
       if (proofUrl != null) 'proofPhotoUrl': proofUrl,
-      if (photoSubmittedBy != null) 'photoSubmittedBy': photoSubmittedBy,
-      if (proofUrl != null) 'photoSubmittedAt': nowVn,
-      if (status == 'completed' || status == 'done') 'completedAt': nowVn,
     });
   }
 

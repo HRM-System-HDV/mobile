@@ -500,20 +500,17 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
     }
   }
 
-  /// Chốt ra một ca bị bỏ qua (status 'missed') bằng chính hành động check-out
-  /// thường. `shiftId` là id dòng ca thật (`staff.shiftId` từ GET /api/shifts) —
-  /// bắt buộc khi chốt cho nhân viên khác để backend đóng đúng bản ghi.
-  /// Thành công thì pop(true) để màn lịch chung tải lại, nhãn 'missed' biến mất.
+  /// Chốt ra một ca bị bỏ qua (`attendanceState` = 'missed_checkout') bằng
+  /// chính hành động check-out thường. `shiftId` là id dòng ca thật
+  /// (`staff.shiftId` từ GET /api/shifts) — bắt buộc khi chốt cho nhân viên
+  /// khác để backend đóng đúng bản ghi. Giờ ra do server tính, client không gửi.
+  /// Thành công thì pop(true) để màn lịch chung tải lại, nhãn 'Bỏ qua ca' biến mất.
   /// Lỗi 400/403 thì hiện đúng `error.message` của backend (envelope { error }).
   Future<void> _handleCheckOutSkipped(BuildContext context) async {
-    final now = DateTime.now();
-    final time =
-        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
     try {
       await (attendance ?? AttendanceRepository()).checkOut(
         employeeId: staff.id,
         shiftId: staff.shiftId,
-        checkoutTime: time,
       );
       if (!context.mounted) return;
       Navigator.pop(context, true);

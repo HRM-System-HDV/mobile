@@ -2,42 +2,46 @@ import '../../core/models/attendance.dart';
 import '../../core/network/api_client.dart';
 
 /// Repository chấm công gọi qua api-gateway (4000) về work-service (4003).
+///
+/// Body chỉ được chứa đúng các khóa WorkService cho phép
+/// (`employeeId`, `shiftId`, `wifi`), mọi khóa thừa đều bị backend trả 400
+/// "Thuộc tính không hỗ trợ". Giờ vào/ra do server tính, client không gửi.
 class AttendanceRepository {
   final ApiClient api;
   AttendanceRepository({ApiClient? api}) : api = api ?? ApiClient();
+
+  /// Wi-Fi là MỘT object `{ssid, bssid}`, không phải hai khóa rời.
+  static Map<String, dynamic> _wifi({String? ssid, String? bssid}) => {
+        if (ssid != null) 'ssid': ssid,
+        if (bssid != null) 'bssid': bssid,
+      };
 
   Future<AttendanceModel> checkIn({
     required String employeeId,
     required String shiftId,
     String? wifiSsid,
     String? wifiBssid,
-    String? checkinTime,
   }) async {
     final res = await api.postJson('/api/attendance/checkin', {
       'employeeId': employeeId,
       'shiftId': shiftId,
-      if (wifiSsid != null) 'wifiSsid': wifiSsid,
-      if (wifiBssid != null) 'wifiBssid': wifiBssid,
-      if (checkinTime != null) 'checkinTime': checkinTime,
+      'wifi': _wifi(ssid: wifiSsid, bssid: wifiBssid),
     });
-    final Map<String, dynamic> data = res is Map<String, dynamic> ? res : {};
-    return AttendanceModel.fromJson(data);
+    return AttendanceModel.fromJson(_asMap(res));
   }
 
   Future<AttendanceModel> checkOut({
-    String? attendanceId,
-    String? employeeId,
-    String? shiftId,
-    String? checkoutTime,
+    required String employeeId,
+    required String shiftId,
+    String? wifiSsid,
+    String? wifiBssid,
   }) async {
     final res = await api.postJson('/api/attendance/checkout', {
-      if (attendanceId != null) 'attendanceId': attendanceId,
-      if (employeeId != null) 'employeeId': employeeId,
-      if (shiftId != null) 'shiftId': shiftId,
-      if (checkoutTime != null) 'checkoutTime': checkoutTime,
+      'employeeId': employeeId,
+      'shiftId': shiftId,
+      'wifi': _wifi(ssid: wifiSsid, bssid: wifiBssid),
     });
-    final Map<String, dynamic> data = res is Map<String, dynamic> ? res : {};
-    return AttendanceModel.fromJson(data);
+    return AttendanceModel.fromJson(_asMap(res));
   }
 
   /// Đọc cấu hình chấm công. Lỗi mạng/403 KHÔNG được nuốt thành cấu hình rỗng
@@ -45,23 +49,22 @@ class AttendanceRepository {
   /// tầng trên hiển thị.
   Future<Map<String, dynamic>> getConfig() async {
     final res = await api.getJson('/api/attendance/config');
-    if (res is Map<String, dynamic>) {
-      final d = res['data'];
-      if (d is Map<String, dynamic>) return d;
-      return res;
-    }
-    return {};
+    return _asMap(res);
   }
 
+  /// `workDate` dạng YYYY-MM-DD, `month` dạng YYYY-MM — backend không nhận
+  /// khóa `date` và cũng không còn `branchSlug`.
   Future<List<AttendanceModel>> getAttendance({
     String? employeeId,
-    String? date,
-    String? branchSlug,
+    String? workDate,
+    String? month,
+    String? branchId,
   }) async {
     final query = <String, String>{};
-    if (employeeId != null) query['employeeId'] = employeeId;
-    if (date != null) query['date'] = date;
-    if (branchSlug != null && branchSlug.isNotEmpty) query['branchSlug'] = branchSlug;
+    if (employeeId != null && employeeId.isNotEmpty) query['employeeId'] = employeeId;
+    if (workDate != null && workDate.isNotEmpty) query['workDate'] = workDate;
+    if (month != null && month.isNotEmpty) query['month'] = month;
+    if (branchId != null && branchId.isNotEmpty) query['branchId'] = branchId;
 
     final data = await api.getJson('/api/attendance', query: query);
     final List list = data is List ? data : [];
@@ -70,4 +73,8 @@ class AttendanceRepository {
         .map(AttendanceModel.fromJson)
         .toList();
   }
+
+  /// api_client đã bóc envelope `{data}`, repository không bóc lần hai.
+  static Map<String, dynamic> _asMap(dynamic res) =>
+      res is Map<String, dynamic> ? res : const {};
 }

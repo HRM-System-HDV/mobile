@@ -788,20 +788,17 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
     TaskSourceType selectedSource = TaskSourceType.manager;
     TaskPriority selectedPriority = TaskPriority.normal;
 
-    // Danh sách ca mẫu
-    final shiftOptions = _shiftTemplates.isNotEmpty
-        ? _shiftTemplates.map((t) {
-            final name = t['name']?.toString() ?? 'Ca';
-            final start = t['startTime']?.toString() ?? '07:00';
-            final end = t['endTime']?.toString() ?? '14:00';
-            return '$name ($start - $end)';
-          }).toList()
-        : [
-            'Ca Sáng (07:00 - 14:00)',
-            'Ca Chiều (14:00 - 22:00)',
-            'Ca Tối (18:00 - 23:00)',
-          ];
-    String selectedShift = shiftOptions.first;
+    // Danh sách ca mẫu: giá trị gửi backend là templateId, nhãn là tên ca + giờ.
+    final shiftOptions = <String, String>{};
+    for (final t in _shiftTemplates) {
+      final id = t['id']?.toString() ?? '';
+      if (id.isEmpty) continue;
+      final name = t['name']?.toString() ?? 'Ca';
+      final start = t['startTime']?.toString() ?? '';
+      final end = t['endTime']?.toString() ?? '';
+      shiftOptions[id] = (start.isEmpty || end.isEmpty) ? name : '$name ($start - $end)';
+    }
+    String? selectedTemplateId = shiftOptions.keys.isNotEmpty ? shiftOptions.keys.first : null;
 
     final String? initialStaff = _employeeList.isNotEmpty
         ? _employeeList.first['name']?.toString()
@@ -810,10 +807,11 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
 
     // Chi nhánh
     final currentScopeBranch = BranchScope.selectedBranch(context);
-    String targetBranch = currentScopeBranch?.slug ?? (_branchList.isNotEmpty ? _branchList.first.slug : '');
+    String targetBranchId = currentScopeBranch?.id ??
+        (_branchList.isNotEmpty ? _branchList.first.id : '');
 
-    // Deadline mặc định: 4 tiếng sau
-    DateTime selectedDeadline = DateTime.now().add(const Duration(hours: 4));
+    // Hạn chót mặc định: hôm nay (backend lưu dueDate dạng ngày).
+    DateTime selectedDeadline = DateTime.now();
 
     bool requirePhoto = false;
 
@@ -887,30 +885,38 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                 if (selectedSource == TaskSourceType.shift) ...[
                   // Ca làm việc áp dụng
                   DropdownButtonFormField<String>(
-                    initialValue: selectedShift,
+                    initialValue: selectedTemplateId,
                     decoration: InputDecoration(
                       labelText: 'Ca làm việc áp dụng (từ DB)',
+                      hintText: _shiftTemplates.isEmpty
+                          ? (_catalogError ?? 'Chưa có dữ liệu khung ca mẫu')
+                          : null,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    items: shiftOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                    items: shiftOptions.entries
+                        .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                        .toList(),
                     onChanged: (val) {
-                      if (val != null) setDialogState(() => selectedShift = val);
+                      if (val != null) setDialogState(() => selectedTemplateId = val);
                     },
                   ),
                   const SizedBox(height: 12),
                   // Chi nhánh áp dụng
                   if (_branchList.isNotEmpty)
                     DropdownButtonFormField<String>(
-                      initialValue: _branchList.any((b) => b.slug.toLowerCase() == targetBranch.toLowerCase())
-                          ? _branchList.firstWhere((b) => b.slug.toLowerCase() == targetBranch.toLowerCase()).slug
-                          : _branchList.first.slug,
+                      initialValue: _branchList.any((b) => b.id == targetBranchId)
+                          ? targetBranchId
+                          : _branchList.first.id,
                       decoration: InputDecoration(
                         labelText: 'Chi nhánh áp dụng',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                       ),
-                      items: _branchList.map((b) => DropdownMenuItem(value: b.slug, child: Text('${b.name} (${b.slug.toUpperCase()})'))).toList(),
+                      items: _branchList
+                          .map((b) => DropdownMenuItem(
+                              value: b.id, child: Text('${b.name} (${b.branchCode})')))
+                          .toList(),
                       onChanged: (val) {
-                        if (val != null) setDialogState(() => targetBranch = val);
+                        if (val != null) setDialogState(() => targetBranchId = val);
                       },
                     ),
                   const SizedBox(height: 12),
@@ -928,20 +934,18 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                     items: _employeeList.map((e) {
                       final name = e['name']?.toString() ?? 'Nhân viên';
                       final role = e['role']?.toString() ?? 'Nhân viên';
-                      final branchSlug =
-                          e['branchSlug']?.toString() ?? e['branch']?.toString() ?? '';
-                      // Map slug→tên chi nhánh từ _branchList đã nạp; không map được giữ nguyên.
-                      String branchLabel = branchSlug;
+                      final empBranchId = e['branchId']?.toString() ?? '';
+                      // Map id chi nhánh→tên từ _branchList đã nạp; không map được giữ nguyên.
+                      String branchLabel = empBranchId;
                       for (final b in _branchList) {
-                        if (b.slug.toLowerCase() == branchSlug.toLowerCase() ||
-                            b.code.toLowerCase() == branchSlug.toLowerCase()) {
+                        if (b.id == empBranchId || b.branchCode == empBranchId) {
                           branchLabel = b.name;
                           break;
                         }
                       }
                       return DropdownMenuItem(
                         value: name,
-                        child: Text('$name ($role${branchSlug.isNotEmpty ? ' - $branchLabel' : ''})'),
+                        child: Text('$name ($role${empBranchId.isNotEmpty ? ' - $branchLabel' : ''})'),
                       );
                     }).toList(),
                     onChanged: (val) {
@@ -979,22 +983,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                       lastDate: DateTime.now().add(const Duration(days: 365)),
                     );
                     if (pickedDate != null) {
-                      if (!sheetCtx.mounted) return;
-                      final pickedTime = await showTimePicker(
-                        context: sheetCtx,
-                        initialTime: TimeOfDay.fromDateTime(selectedDeadline),
-                      );
-                      if (pickedTime != null) {
-                        setDialogState(() {
-                          selectedDeadline = DateTime(
-                            pickedDate.year,
-                            pickedDate.month,
-                            pickedDate.day,
-                            pickedTime.hour,
-                            pickedTime.minute,
-                          );
-                        });
-                      }
+                      setDialogState(() => selectedDeadline = pickedDate);
                     }
                   },
                   borderRadius: BorderRadius.circular(12),
@@ -1016,7 +1005,7 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
                             ),
                             const SizedBox(height: 3),
                             Text(
-                              vnDateTime(selectedDeadline),
+                              vnDate(selectedDeadline),
                               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                             ),
                           ],
@@ -1090,47 +1079,44 @@ class _TaskListScreenState extends State<TaskListScreen> with SingleTickerProvid
 
                     final bool isShift = selectedSource == TaskSourceType.shift;
 
-                    Map<String, dynamic>? selectedEmpObj;
-                    if (!isShift && assignedPerson != null) {
-                      selectedEmpObj = _employeeList.firstWhere(
+                    String? assigneeId;
+                    if (!isShift) {
+                      final emp = _employeeList.firstWhere(
                         (e) => e['name']?.toString() == assignedPerson,
                         orElse: () => <String, dynamic>{},
                       );
+                      assigneeId = emp['id']?.toString();
+                      if (assigneeId == null || assigneeId.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Vui lòng chọn người thực hiện')),
+                        );
+                        return;
+                      }
+                    } else if (selectedTemplateId == null || targetBranchId.isEmpty) {
+                      // Việc chung bắt buộc branchId + templateId + workDate.
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Vui lòng chọn chi nhánh và khung ca áp dụng')),
+                      );
+                      return;
                     }
-
-                    final empName = isShift
-                        ? 'Tất cả nhân sự trực ${selectedShift.split('(')[0].trim()}'
-                        : (assignedPerson ?? 'Nhân viên');
-                    final empEmail = isShift ? 'shift_all' : (selectedEmpObj?['email']?.toString() ?? '');
-                    final assigneeId = selectedEmpObj?['id']?.toString() ?? (isShift ? null : assignedPerson);
-
-                    final effectiveBranch = isShift
-                        ? targetBranch
-                        : (selectedEmpObj?['branchSlug']?.toString() ?? selectedEmpObj?['branch']?.toString() ?? targetBranch);
 
                     final priStr = selectedPriority == TaskPriority.urgent
                         ? 'urgent'
                         : (selectedPriority == TaskPriority.high ? 'high' : 'normal');
 
-                    final dueDateStr = vnDateTime(selectedDeadline);
-
-                    final currentUserName = widget.currentUser.name.isNotEmpty
-                        ? '${widget.currentUser.name} (${widget.currentUser.roleTitle.isNotEmpty ? widget.currentUser.roleTitle : 'Quản lý'})'
-                        : 'Ban Quản lý';
+                    // dueDate/workDate gửi lên phải là YYYY-MM-DD.
+                    final dueDateStr = toIsoDate(vnDate(selectedDeadline));
 
                     try {
                       await _taskRepo.createTask(
                         title: titleCtrl.text.trim(),
                         description: descCtrl.text.trim(),
-                        branchSlug: effectiveBranch,
                         priority: priStr,
                         dueDate: dueDateStr,
                         assigneeId: assigneeId,
-                        sourceType: isShift ? 'shift' : 'manager',
-                        assignedByName: isShift ? 'Quy trình ${selectedShift.split('(')[0].trim()}' : currentUserName,
-                        shiftName: isShift ? selectedShift : null,
-                        assignedToEmail: empEmail,
-                        assignedToName: empName,
+                        branchId: targetBranchId,
+                        templateId: selectedTemplateId,
+                        workDate: dueDateStr,
                         requirePhoto: requirePhoto,
                       );
                       if (sheetCtx.mounted) {

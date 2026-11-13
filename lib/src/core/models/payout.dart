@@ -1,10 +1,11 @@
-/// Lệnh chi — khớp schema docs/A §6.
-/// `id` dạng TXN-xxxxxx, `bankReference` dạng BANK-xxxxxxxx.
-/// Trùng `idempotencyKey` trả bản ghi cũ kèm `deduped: true`. Hết số dư HTTP 422.
+/// Lệnh chi — payroll-service `payouts`.
+/// `id` là UUID, `bankReference` dạng GD-000001, `debitAccountNumber` là số tài khoản
+/// trích nợ. Trùng `idempotencyKey` trả bản ghi cũ kèm `deduped: true`.
+/// Hết số dư HTTP 422.
 class PayoutModel {
   final String id;
   final String bankReference;
-  final String debitAccount;
+  final String debitAccountNumber;
   final double totalAmount;
   final String content;
   final int beneficiaryCount;
@@ -16,7 +17,7 @@ class PayoutModel {
   const PayoutModel({
     required this.id,
     required this.bankReference,
-    required this.debitAccount,
+    required this.debitAccountNumber,
     required this.totalAmount,
     required this.content,
     required this.beneficiaryCount,
@@ -27,12 +28,12 @@ class PayoutModel {
   });
 
   factory PayoutModel.fromJson(Map<String, dynamic> j) => PayoutModel(
-        id: j['id']?.toString() ?? j['transactionId']?.toString() ?? '',
+        id: j['id']?.toString() ?? '',
         bankReference: j['bankReference']?.toString() ?? '',
-        debitAccount: j['debitAccount']?.toString() ?? '',
-        totalAmount: (j['totalAmount'] as num?)?.toDouble() ?? 0,
+        debitAccountNumber: j['debitAccountNumber']?.toString() ?? '',
+        totalAmount: double.tryParse(j['totalAmount']?.toString() ?? '') ?? 0.0,
         content: j['content']?.toString() ?? '',
-        beneficiaryCount: (j['beneficiaryCount'] as num?)?.toInt() ?? 0,
+        beneficiaryCount: int.tryParse(j['beneficiaryCount']?.toString() ?? '') ?? 0,
         idempotencyKey: j['idempotencyKey']?.toString() ?? '',
         status: j['status']?.toString() ?? '',
         createdAt: j['createdAt']?.toString(),

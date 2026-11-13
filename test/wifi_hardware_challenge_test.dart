@@ -10,13 +10,18 @@ import 'package:mobile/src/features/wifi_config/wifi_config_repository.dart';
 
 import 'repositories/mock_api_client.dart';
 
+/// `toSafeUser` của identity-service không còn trả `roleTitle`, nên UserModel
+/// chỉ dựng được các trường thật sự có trên hợp đồng.
 UserModel _user() => const UserModel(
       id: 'emp-challenger-01',
       name: 'Nguyen Van Challenger',
       email: 'challenger@company.com',
       role: 'staff',
-      roleTitle: 'Nhân viên phục vụ',
     );
+
+/// integration-service khai báo wifiConfig.branchId là UUID bắt buộc
+/// (`contentFields.wifiConfig`), không còn tên chi nhánh dạng `branch`.
+const _branchId = '2f7c1f3a-9c1e-4f6a-9a3b-1d2c3f4a5b61';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -31,13 +36,13 @@ void main() {
       repo = AttendanceRepository(api: mockApi);
     });
 
-    test('Case 1.1: wifiBssid is null -> wifiBssid key is completely omitted from JSON body', () async {
+    test('Case 1.1: wifi identifiers are null -> wifi object is empty, no extra key leaks', () async {
       mockApi.postJsonResponse = {
         'id': 'att-null-bssid',
         'employeeId': 'emp-challenger-01',
         'shiftId': 'shift-morning',
-        'date': '11-11-2026',
-        'checkIn': '08:00',
+        'workDate': '2026-11-11',
+        'checkIn': '2026-11-11T08:00:00.000Z',
         'status': 'present',
       };
 
@@ -46,28 +51,35 @@ void main() {
         shiftId: 'shift-morning',
         wifiSsid: null,
         wifiBssid: null,
-        checkinTime: '08:00',
       );
 
       expect(result.id, 'att-null-bssid');
+      expect(result.workDate, '2026-11-11');
       expect(mockApi.requests.length, 1);
+      expect(mockApi.requests.first.path, '/api/attendance/checkin');
       final payload = mockApi.requests.first.payload!;
-      expect(payload.containsKey('wifiBssid'), isFalse,
-          reason: 'wifiBssid must be omitted when null');
-      expect(payload.containsKey('wifiSsid'), isFalse,
-          reason: 'wifiSsid must be omitted when null');
+      // WorkService gọi fields(payload, ["employeeId", "shiftId", "wifi"]): đúng
+      // ba khóa, khóa thừa là 400 "Thuộc tính không hỗ trợ".
+      expect(payload.keys.toSet(), {'employeeId', 'shiftId', 'wifi'});
+      expect(payload['wifi'], isEmpty,
+          reason: 'wifi là object {ssid,bssid}; không có ssid/bssid thì rỗng');
       expect(payload['employeeId'], 'emp-challenger-01');
       expect(payload['shiftId'], 'shift-morning');
-      expect(payload['checkinTime'], '08:00');
+      // Giờ vào do server tính (Time.now), client gửi lên là key thừa -> 400.
+      expect(payload.containsKey('checkinTime'), isFalse);
+      expect(payload.containsKey('attendanceId'), isFalse);
+      expect(payload.containsKey('wifiSsid'), isFalse,
+          reason: 'wifi phải nằm trong object, không phải hai khóa rời');
+      expect(payload.containsKey('wifiBssid'), isFalse);
     });
 
-    test('Case 1.2: wifiBssid is present -> wifiBssid key is correctly included in JSON body', () async {
+    test('Case 1.2: wifi identifiers present -> sent as ONE {ssid, bssid} object', () async {
       mockApi.postJsonResponse = {
         'id': 'att-with-bssid',
         'employeeId': 'emp-challenger-01',
         'shiftId': 'shift-morning',
-        'date': '11-11-2026',
-        'checkIn': '08:00',
+        'workDate': '2026-11-11',
+        'checkIn': '2026-11-11T08:00:00.000Z',
         'status': 'present',
       };
 
@@ -76,14 +88,41 @@ void main() {
         shiftId: 'shift-morning',
         wifiSsid: 'Office_Guest',
         wifiBssid: 'AA:BB:CC:DD:EE:FF',
-        checkinTime: '08:00',
       );
 
       expect(result.id, 'att-with-bssid');
       expect(mockApi.requests.length, 1);
       final payload = mockApi.requests.first.payload!;
-      expect(payload['wifiBssid'], 'AA:BB:CC:DD:EE:FF');
-      expect(payload['wifiSsid'], 'Office_Guest');
+      expect(payload.keys.toSet(), {'employeeId', 'shiftId', 'wifi'});
+      expect(payload['wifi'], {
+        'ssid': 'Office_Guest',
+        'bssid': 'AA:BB:CC:DD:EE:FF',
+      });
+    });
+
+    test('Case 1.2b: checkOut dùng đúng một object wifi, không có checkoutTime', () async {
+      mockApi.postJsonResponse = {
+        'id': 'att-out',
+        'employeeId': 'emp-challenger-01',
+        'shiftId': 'shift-evening',
+        'workDate': '2026-11-11',
+        'checkOut': '2026-11-11T22:05:00.000Z',
+        'status': 'present',
+      };
+
+      await repo.checkOut(
+        employeeId: 'emp-challenger-01',
+        shiftId: 'shift-evening',
+        wifiSsid: 'Office_Guest',
+        wifiBssid: 'AA:BB:CC:DD:EE:FF',
+      );
+
+      final payload = mockApi.requests.first.payload!;
+      expect(mockApi.requests.first.path, '/api/attendance/checkout');
+      expect(payload.keys.toSet(), {'employeeId', 'shiftId', 'wifi'});
+      expect(payload['wifi'], {'ssid': 'Office_Guest', 'bssid': 'AA:BB:CC:DD:EE:FF'});
+      expect(payload.containsKey('checkoutTime'), isFalse);
+      expect(payload.containsKey('attendanceId'), isFalse);
     });
 
     test('Case 1.3: Server throws ApiException (400 / 403) -> propagated correctly', () async {
@@ -112,7 +151,7 @@ void main() {
 
     test('Case 2.1: Hardware BSSID present -> takes priority over config BSSID', () {
       final configs = [
-        const WifiConfigModel(id: 'w1', ssid: 'Store_WiFi', bssid: 'CONFIG:BSSID:11', branch: 'B1', status: 'active')
+        const WifiConfigModel(id: 'w1', ssid: 'Store_WiFi', bssid: 'CONFIG:BSSID:11', branchId: _branchId, status: 'hoạt động')
       ];
       final effective = resolveEffectiveBssid('HARDWARE:BSSID:22', configs);
       expect(effective, 'HARDWARE:BSSID:22');
@@ -120,7 +159,7 @@ void main() {
 
     test('Case 2.2: Hardware BSSID is null -> falls back to branch config BSSID', () {
       final configs = [
-        const WifiConfigModel(id: 'w1', ssid: 'Store_WiFi', bssid: 'CONFIG:BSSID:11', branch: 'B1', status: 'active')
+        const WifiConfigModel(id: 'w1', ssid: 'Store_WiFi', bssid: 'CONFIG:BSSID:11', branchId: _branchId, status: 'hoạt động')
       ];
       final effective = resolveEffectiveBssid(null, configs);
       expect(effective, 'CONFIG:BSSID:11');
@@ -128,7 +167,7 @@ void main() {
 
     test('Case 2.3: Hardware BSSID is empty string -> falls back to branch config BSSID', () {
       final configs = [
-        const WifiConfigModel(id: 'w1', ssid: 'Store_WiFi', bssid: 'CONFIG:BSSID:11', branch: 'B1', status: 'active')
+        const WifiConfigModel(id: 'w1', ssid: 'Store_WiFi', bssid: 'CONFIG:BSSID:11', branchId: _branchId, status: 'hoạt động')
       ];
       final effective = resolveEffectiveBssid('', configs);
       expect(effective, 'CONFIG:BSSID:11');
@@ -146,7 +185,7 @@ void main() {
 
     test('Case 2.6: Hardware BSSID null and config BSSID empty -> resolves to null', () {
       final configs = [
-        const WifiConfigModel(id: 'w1', ssid: 'Store_WiFi', bssid: '', branch: 'B1', status: 'active')
+        const WifiConfigModel(id: 'w1', ssid: 'Store_WiFi', bssid: '', branchId: _branchId, status: 'hoạt động')
       ];
       final effective = resolveEffectiveBssid(null, configs);
       expect(effective, isNull);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/config/permissions.dart';
 import '../../core/constants/colors.dart';
 import '../../core/models/branch.dart';
 import '../../core/network/api_client.dart';
@@ -26,6 +27,11 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   String? _loadedUserId;
 
+  /// Ảnh đại diện và số điện thoại chỉ có trong hồ sơ nhân sự
+  /// (GET /api/employees/:employeeId), không nằm trong token user.
+  String? _avatarUrl;
+  String? _phone;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -37,28 +43,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _refreshProfile(UserModel current) async {
+    final employeeId = current.employeeId;
+    if (employeeId == null || employeeId.isEmpty) return;
     try {
-      final data = await EmployeeRepository().getEmployee(current.id);
-      if (data != null && mounted) {
-        final updated = current.copyWith(
-          avatarUrl: data['avatar']?.toString() ?? current.avatarUrl,
-          phone: data['phone']?.toString() ?? current.phone,
-          gender: data['gender']?.toString() ?? current.gender,
-          birthDate: data['birthDate']?.toString() ?? current.birthDate,
-          province: data['province']?.toString() ?? current.province,
-          ward: data['ward']?.toString() ?? current.ward,
-          street: data['street']?.toString() ?? current.street,
-          cccd: data['cccd']?.toString() ?? current.cccd,
-          issueDate: data['issueDate']?.toString() ?? current.issueDate,
-          issuePlace: data['issuePlace']?.toString() ?? current.issuePlace,
-          cccdFrontUrl: data['cccdFront']?.toString() ?? current.cccdFrontUrl,
-          cccdBackUrl: data['cccdBack']?.toString() ?? current.cccdBackUrl,
-          bankName: data['bankName']?.toString() ?? current.bankName,
-          bankAccountNumber: data['bankAccountNumber']?.toString() ?? current.bankAccountNumber,
-          bankAccountName: data['bankAccountName']?.toString() ?? current.bankAccountName,
-        );
-        UserScope.setUser(context, updated);
-      }
+      final data = await EmployeeRepository().getEmployee(employeeId);
+      if (data == null || !mounted) return;
+      setState(() {
+        _avatarUrl = data['avatar']?.toString();
+        _phone = data['phone']?.toString();
+      });
+      UserScope.setUser(
+        context,
+        current.copyWith(
+          gender: data['gender']?.toString(),
+          birthDate: data['birthDate']?.toString(),
+          province: data['province']?.toString(),
+          ward: data['ward']?.toString(),
+          street: data['street']?.toString(),
+          cccd: data['cccd']?.toString(),
+          issueDate: data['issueDate']?.toString(),
+          issuePlace: data['issuePlace']?.toString(),
+          salaryType: data['salaryType']?.toString(),
+          cccdBackUrl: data['cccdBack']?.toString(),
+          bankName: data['bankName']?.toString(),
+          bankAccountNumber: data['bankAccountNumber']?.toString(),
+          bankAccountName: data['bankAccountName']?.toString(),
+        ),
+      );
     } catch (e) {
       // Lỗi tải hồ sơ: giữ dữ liệu cache trên màn, không báo là "không có hồ sơ".
       if (mounted) {
@@ -77,26 +88,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // Đọc từ UserScope để tên/SĐT/ảnh cập nhật ngay sau khi lưu hồ sơ.
     final me = UserScope.currentUser(context) ?? widget.currentUser;
     final bool canManage = me.canManage;
-    final String roleBadge = me.roleTitle;
-    final phone = me.phone.isNotEmpty ? me.phone : '—';
-    final avatarProvider = parseImageProvider(me.avatarUrl);
+    final String roleBadge = kRoleLabels[roleOf(me)] ?? 'Nhân viên';
+    final avatarProvider = parseImageProvider(_avatarUrl);
 
     // Chi nhánh của CHÍNH tài khoản (không phụ thuộc scope đang xem).
     // Luật 12/11: tài khoản bị ghim (manager/staff) chỉ hiện tên chi nhánh ở
     // đúng 1 chỗ duy nhất là tab "Cá nhân"; admin không bị ghim => hiện scope
     // đang xem ("Tất cả chi nhánh" hoặc chi nhánh đã chọn trên AppBar).
-    // Nếu branchById không phân giải được (cache chưa nạp) thì hiện slug viết
-    // hoa — tuyệt đối không bịa tên chi nhánh.
-    final String pinnedBranch = (me.assignedBranchId?.trim() ?? '').isNotEmpty
-        ? me.assignedBranchId!.trim()
-        : (me.branchSlug?.trim() ?? '');
+    // pinnedBranch là UUID chi nhánh (branchId); nếu branchById không phân giải
+    // được (cache chưa nạp) thì hiện mã viết hoa — tuyệt đối không bịa tên.
+    final String pinnedBranch = me.assignedBranchId?.trim() ?? '';
     String branchLabel = BranchScope.label(context);
     if (!me.isAdmin && pinnedBranch.isNotEmpty) {
       final lower = pinnedBranch.toLowerCase();
       final bool resolved = branches.any((b) =>
-          b.id == pinnedBranch ||
-          b.slug.toLowerCase() == lower ||
-          b.code.toLowerCase() == lower);
+          b.id == pinnedBranch || b.code.toLowerCase() == lower);
       branchLabel = resolved ? branchById(pinnedBranch).name : pinnedBranch.toUpperCase();
     }
 
@@ -116,7 +122,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onTap: () => context.push('/profile/info', extra: {
               'name': me.name,
               'email': me.email,
-              'phone': phone,
+              'phone': _phone ?? '',
               'isManager': canManage,
               'user': me,
             }),

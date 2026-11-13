@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
-import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
 import '../leave_request/leave_repository.dart';
@@ -35,7 +34,7 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
   final LeaveRepository _leaveRepo = LeaveRepository();
   final SalaryRepository _salaryRepo = SalaryRepository();
   double? _estimatedSalary;
-  String? _lastUserId;
+  String? _lastEmployeeId;
   String? _loadError;
   // Lỗi riêng của phần dữ liệu lương (ước tính hạn mức tạm ứng).
   String? _salaryError;
@@ -50,18 +49,20 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final uid = UserScope.currentUser(context)?.id;
-    if (_lastUserId != uid) {
-      _lastUserId = uid;
+    final empId = UserScope.currentUser(context)?.employeeId;
+    if (_lastEmployeeId != empId) {
+      _lastEmployeeId = empId;
       _fetchAdvances();
       _fetchSalary();
     }
   }
 
   Future<void> _fetchSalary() async {
-    final uid = UserScope.currentUser(context)?.id;
+    // Payslip thuộc payroll-service, khóa ngoại là UUID nhân sự, không phải
+    // id tài khoản identity.
+    final empId = UserScope.currentUser(context)?.employeeId;
     try {
-      final payslips = await _salaryRepo.getPayslips(employeeId: uid);
+      final payslips = await _salaryRepo.getPayslips(employeeId: empId);
       if (mounted) {
         setState(() {
           if (payslips.isEmpty) {
@@ -104,9 +105,9 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
   }
 
   Future<void> _fetchAdvances() async {
-    final uid = UserScope.currentUser(context)?.id;
+    final empId = UserScope.currentUser(context)?.employeeId;
     try {
-      final list = await _leaveRepo.getRequests(employeeId: uid);
+      final list = await _leaveRepo.getRequests(employeeId: empId);
       if (mounted) {
         final apiRecords = list.where((m) => m.type == 'advance').map((m) {
           final amt = m.title.replaceFirst('Tạm ứng lương: ', '');
@@ -193,19 +194,28 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
               onPressed: () async {
                 final amount = amountController.text.trim();
                 final reason = reasonController.text.trim();
+                // Backend chỉ nhận advanceAmount là chuỗi số nguyên dương, tối đa 15 chữ số.
                 if (amount.isEmpty || reason.isEmpty) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Vui lòng nhập đầy đủ số tiền và lý do')),
                   );
                   return;
                 }
-                final user = UserScope.currentUser(context);
-                final empId = user?.id ?? '';
-                if (empId.isEmpty) {
-                  _showError('Không xác định được nhân sự đang đăng nhập');
+                if (!RegExp(r'^[1-9]\d{0,14}$').hasMatch(amount)) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      backgroundColor: AppColors.error,
+                      content: Text('Số tiền ứng phải là số nguyên dương tối đa 15 chữ số, không có dấu chấm'),
+                    ),
+                  );
                   return;
                 }
-                final branchSlug = BranchScope.selectedBranch(context)?.slug ?? user?.branchSlug ?? '';
+                final user = UserScope.currentUser(context);
+                final empId = user?.employeeId ?? '';
+                if (empId.isEmpty) {
+                  _showError('Tài khoản chưa gắn hồ sơ nhân sự');
+                  return;
+                }
 
                 try {
                   await _leaveRepo.createRequest({
@@ -213,7 +223,7 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
                     'title': 'Tạm ứng lương: $amount đ',
                     'content': reason,
                     'employeeId': empId,
-                    if (branchSlug.isNotEmpty) 'branchSlug': branchSlug,
+                    'advanceAmount': amount,
                   });
                   if (modalCtx.mounted) {
                     Navigator.pop(modalCtx);

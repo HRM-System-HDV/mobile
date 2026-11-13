@@ -11,6 +11,7 @@ import '../../core/state/user_scope.dart';
 import '../../core/utils/image_helper.dart';
 import '../../core/utils/date_format.dart';
 import '../auth/auth_repository.dart';
+import '../schedule/shift_repository.dart' show toIsoDate;
 import 'employee_repository.dart';
 
 class PersonalInfoScreen extends StatefulWidget {
@@ -69,10 +70,31 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
     _cccd = widget.user?.cccd ?? '';
     _issueDate = toVnDate(widget.user?.issueDate);
     _issuePlace = widget.user?.issuePlace ?? '';
-    _avatarUrl = widget.user?.avatarUrl;
-    _cccdFrontUrl = widget.user?.cccdFrontUrl;
+    // Avatar, CCCD mặt trước và SĐT chỉ có trong hồ sơ nhân sự
+    // (GET /api/employees/:employeeId), token user không còn các trường này.
     _cccdBackUrl = widget.user?.cccdBackUrl;
     _cccdCtrl = TextEditingController(text: _cccd);
+    _loadEmployeeMedias();
+  }
+
+  Future<void> _loadEmployeeMedias() async {
+    final employeeId = widget.user?.employeeId;
+    if (employeeId == null || employeeId.isEmpty) return;
+    Map<String, dynamic>? data;
+    try {
+      data = await EmployeeRepository().getEmployee(employeeId);
+    } catch (_) {
+      return;
+    }
+    if (data == null || !mounted) return;
+    final profile = data;
+    setState(() {
+      _avatarUrl = profile['avatar']?.toString();
+      _cccdFrontUrl = profile['cccdFront']?.toString();
+      _cccdBackUrl = profile['cccdBack']?.toString() ?? _cccdBackUrl;
+      final phone = profile['phone']?.toString() ?? '';
+      if (phone.isNotEmpty) _phoneCtrl.text = phone;
+    });
   }
 
   @override
@@ -119,8 +141,13 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
                 _showError('Không xác định được người dùng đang đăng nhập.');
                 return;
               }
+              final employeeId = current.employeeId;
+              if (employeeId == null || employeeId.isEmpty) {
+                _showError('Tài khoản chưa gắn hồ sơ nhân sự.');
+                return;
+              }
               try {
-                await EmployeeRepository().leaveJob(current.id);
+                await EmployeeRepository().leaveJob(employeeId);
               } catch (e) {
                 _showError('Chưa ghi nhận thôi việc: ${_errorText(e)}');
                 return;
@@ -155,14 +182,22 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
     final newName = _nameCtrl.text.trim();
     final newPhone = _phoneCtrl.text.trim();
     final newCccd = _cccdCtrl.text.trim();
+    final employeeId = current.employeeId;
+    if (employeeId == null || employeeId.isEmpty) {
+      _showError('Tài khoản chưa gắn hồ sơ nhân sự.');
+      return;
+    }
     try {
       // Backend chỉ nhận avatar/cccdFront/cccdBack; gửi *Url sẽ bị 403.
-      await EmployeeRepository().updateEmployee(current.id, {
+      // Ngày phải là YYYY-MM-DD và phải là null khi chưa có (chuỗi rỗng bị 400).
+      final birthDate = toIsoDate(_birthDate);
+      final issueDate = toIsoDate(_issueDate);
+      await EmployeeRepository().updateEmployee(employeeId, {
         'name': newName,
         'phone': newPhone,
         'cccd': newCccd,
-        'birthDate': toVnDate(_birthDate),
-        'issueDate': toVnDate(_issueDate),
+        'birthDate': birthDate.isEmpty ? null : birthDate,
+        'issueDate': issueDate.isEmpty ? null : issueDate,
         if (_avatarUrl != null) 'avatar': _avatarUrl,
         if (_cccdFrontUrl != null) 'cccdFront': _cccdFrontUrl,
         if (_cccdBackUrl != null) 'cccdBack': _cccdBackUrl,
@@ -176,17 +211,14 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
       _cccd = newCccd;
       _isEditing = false;
     });
-    // Đồng bộ lại UserScope để tên/SĐT/ảnh mới hiện ngay ở mọi màn hình.
+    // Đồng bộ lại UserScope để tên/CCCD mới hiện ngay ở mọi màn hình.
     UserScope.setUser(
       context,
       current.copyWith(
         name: newName.isNotEmpty ? newName : null,
-        phone: newPhone,
         cccd: newCccd,
         birthDate: _birthDate,
         issueDate: _issueDate,
-        avatarUrl: _avatarUrl,
-        cccdFrontUrl: _cccdFrontUrl,
         cccdBackUrl: _cccdBackUrl,
       ),
     );
@@ -280,16 +312,17 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
         _showError('Không xác định được người dùng đang đăng nhập.');
         return;
       }
+      final employeeId = current.employeeId;
+      if (employeeId == null || employeeId.isEmpty) {
+        _showError('Tài khoản chưa gắn hồ sơ nhân sự.');
+        return;
+      }
       // Ảnh đã lên máy chủ nhưng chưa gắn vào hồ sơ thì vẫn là chưa lưu.
-      await EmployeeRepository().updateEmployee(current.id, {field: url});
+      await EmployeeRepository().updateEmployee(employeeId, {field: url});
       if (!mounted) return;
       onUploaded(url);
-      // Đồng bộ UserScope để avatar/CCCD mới hiện ngay ở mọi màn hình.
-      if (field == 'avatar') {
-        UserScope.setUser(context, current.copyWith(avatarUrl: url));
-      } else if (field == 'cccdFront') {
-        UserScope.setUser(context, current.copyWith(cccdFrontUrl: url));
-      } else if (field == 'cccdBack') {
+      // Chỉ CCCD mặt sau là còn lưu trong user; avatar/CCCD trước lấy từ hồ sơ.
+      if (field == 'cccdBack') {
         UserScope.setUser(context, current.copyWith(cccdBackUrl: url));
       }
       ScaffoldMessenger.of(context).showSnackBar(
@@ -307,17 +340,15 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
   @override
   Widget build(BuildContext context) {
     // Dòng phụ của thẻ đầu trang: chi nhánh thay cho email.
-    // Admin: scope đang xem. Manager/Staff: chi nhánh ghim của tài khoản,
-    // map slug→name qua cache branches; cache-miss thì in slug viết hoa, không bịa tên.
+    // Admin: scope đang xem. Manager/Staff: chi nhánh ghim (branchId) của tài
+    // khoản, map id→name qua cache branches; cache-miss thì in id viết hoa.
     final me = UserScope.currentUser(context) ?? widget.user;
-    final pinned = (me?.assignedBranchId?.trim() ?? '').isNotEmpty
-        ? me!.assignedBranchId!.trim()
-        : (me?.branchSlug?.trim() ?? '');
+    final pinned = me?.assignedBranchId?.trim() ?? '';
     String branchLabel = BranchScope.label(context);
     if (me != null && !me.isAdmin && pinned.isNotEmpty) {
       final lower = pinned.toLowerCase();
       final resolved = branches.any((b) =>
-          b.id == pinned || b.slug.toLowerCase() == lower || b.code.toLowerCase() == lower);
+          b.id == pinned || b.code.toLowerCase() == lower);
       branchLabel = resolved ? branchById(pinned).name : pinned.toUpperCase();
     }
 

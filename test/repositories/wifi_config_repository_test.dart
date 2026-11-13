@@ -5,6 +5,8 @@ import 'package:mobile/src/features/wifi_config/wifi_config_repository.dart';
 import 'mock_api_client.dart';
 
 void main() {
+  const branchUuid = '3f2b6c1e-9d4a-4f77-8a51-2c0b6f1d4e90';
+
   late MockApiClient mockApi;
   late WifiConfigRepository repository;
 
@@ -20,7 +22,7 @@ void main() {
           'id': 'wifi-1',
           'ssid': 'Coffee_Store_5G',
           'bssid': 'AA:BB:CC:DD:EE:FF',
-          'branch': 'q1',
+          'branchId': branchUuid,
           'status': 'hoạt động',
         }
       ];
@@ -32,32 +34,34 @@ void main() {
       expect(c.id, 'wifi-1');
       expect(c.ssid, 'Coffee_Store_5G');
       expect(c.bssid, 'AA:BB:CC:DD:EE:FF');
-      expect(c.branch, 'q1');
+      expect(c.branchId, branchUuid);
       expect(c.status, 'hoạt động');
 
       expect(mockApi.requests.first.path, '/api/wifi-configs');
+      expect(mockApi.requests.first.query, isEmpty);
     });
 
-    test('fetches with encoded branch query param in path', () async {
+    test('filters by branchId query param', () async {
       mockApi.getJsonResponse = [
         {
           'id': 'wifi-2',
           'ssid': 'Branch_WiFi',
           'bssid': '11:22:33:44:55:66',
-          'branch': 'Chi Nhánh 1',
+          'branchId': branchUuid,
           'status': 'hoạt động',
         }
       ];
 
-      final configs = await repository.getWifiConfigs(branch: 'Chi Nhánh 1');
+      final configs = await repository.getWifiConfigs(branchId: branchUuid);
 
       expect(configs.length, 1);
-      expect(mockApi.requests.first.path, '/api/wifi-configs?branch=Chi%20Nh%C3%A1nh%201');
+      expect(mockApi.requests.first.path, '/api/wifi-configs');
+      expect(mockApi.requests.first.query, {'branchId': branchUuid});
     });
 
     test('propagates ApiException on failure', () async {
       mockApi.getJsonHandler = (path, query) {
-        throw const ApiException('FORBIDDEN', 'Không đủ quyền', 403);
+        throw const ApiException('FORBIDDEN', 'Chỉ admin được quản trị hệ thống', 403);
       };
 
       expect(
@@ -68,40 +72,42 @@ void main() {
   });
 
   group('WifiConfigRepository mutations', () {
-    test('createWifiConfig sends POST and returns parsed model', () async {
+    test('createWifiConfig sends only contract keys', () async {
       mockApi.postJsonResponse = {
         'id': 'wifi-new',
         'ssid': 'Office_Main',
         'bssid': '00:11:22:33:44:55',
-        'branch': 'hq',
+        'branchId': branchUuid,
         'status': 'hoạt động',
       };
 
       final created = await repository.createWifiConfig(
         ssid: 'Office_Main',
         bssid: '00:11:22:33:44:55',
-        branch: 'hq',
+        branchId: branchUuid,
       );
 
       expect(created.id, 'wifi-new');
       expect(created.ssid, 'Office_Main');
       expect(created.bssid, '00:11:22:33:44:55');
+      expect(created.branchId, branchUuid);
 
       expect(mockApi.requests.length, 1);
       final req = mockApi.requests.first;
       expect(req.method, 'POST');
       expect(req.path, '/api/wifi-configs');
-      expect(req.payload?['ssid'], 'Office_Main');
+      expect(req.payload?.keys.toSet(), {'ssid', 'bssid', 'branchId', 'status'});
+      expect(req.payload?['branchId'], branchUuid);
     });
 
     test('updateWifiConfig sends PUT to /api/wifi-configs/:id', () async {
-      mockApi.putJsonResponse = {'success': true};
+      mockApi.putJsonResponse = {'id': 'wifi-1', 'status': 'vô hiệu hóa'};
 
-      await repository.updateWifiConfig('wifi-1', {'status': 'tạm dừng'});
+      await repository.updateWifiConfig('wifi-1', {'status': 'vô hiệu hóa'});
 
       expect(mockApi.requests.last.method, 'PUT');
       expect(mockApi.requests.last.path, '/api/wifi-configs/wifi-1');
-      expect(mockApi.requests.last.payload?['status'], 'tạm dừng');
+      expect(mockApi.requests.last.payload?['status'], 'vô hiệu hóa');
     });
 
     test('deleteWifiConfig sends DELETE to /api/wifi-configs/:id', () async {
@@ -109,19 +115,6 @@ void main() {
 
       expect(mockApi.requests.last.method, 'DELETE');
       expect(mockApi.requests.last.path, '/api/wifi-configs/wifi-1');
-    });
-
-    test('scanNearbyWifi calls /api/wifi-configs/scan', () async {
-      mockApi.getJsonResponse = [
-        {'ssid': 'Coffee_Store_5G', 'bssid': 'AA:BB:CC:DD:EE:FF'}
-      ];
-
-      final results = await repository.scanNearbyWifi();
-
-      expect(results.length, 1);
-      expect(results.first['ssid'], 'Coffee_Store_5G');
-      expect(mockApi.requests.last.method, 'GET');
-      expect(mockApi.requests.last.path, '/api/wifi-configs/scan');
     });
   });
 }

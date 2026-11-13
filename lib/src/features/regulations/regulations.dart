@@ -6,6 +6,7 @@ import '../../core/models/branch.dart';
 import '../../core/network/api_client.dart';
 import '../../core/utils/date_format.dart';
 import '../profile/employee_repository.dart';
+import '../schedule/shift_repository.dart' show toIsoDate;
 import 'regulation_repository.dart';
 
 class CompanyRegulationsScreen extends StatefulWidget {
@@ -95,9 +96,19 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
     return Colors.blue;
   }
 
+  /// `scopeBranchId` là UUID chi nhánh; hiển thị tên, công ty thì hiện "Toàn công ty".
+  String _scopeLabel(String? scopeBranchId) {
+    if (scopeBranchId == null || scopeBranchId.isEmpty) return 'Toàn công ty';
+    for (final b in _branches) {
+      if (b.id == scopeBranchId) return b.name;
+    }
+    return branchById(scopeBranchId).name;
+  }
+
   void _showDetail(BuildContext context, RegulationModel regulation) {
     final tagColor = _colorForCategory(regulation.category);
     final categoryText = regulation.category.isNotEmpty ? regulation.category : 'Nội quy';
+    final scopeLabel = _scopeLabel(regulation.scopeBranchId);
 
     showModalBottomSheet(
       context: context,
@@ -157,20 +168,18 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
                       ),
                     ),
                   ],
-                  if (regulation.scope.isNotEmpty) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        regulation.scope,
-                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                      ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(6),
                     ),
-                  ],
+                    child: Text(
+                      scopeLabel,
+                      style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 10),
@@ -180,16 +189,15 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                'Mã: ${regulation.code.isNotEmpty ? regulation.code : '—'} • Trạng thái: ${regulation.status} • Bản: v${regulation.version}',
+                'Mã: ${regulation.regulationCode.isNotEmpty ? regulation.regulationCode : '—'} • Trạng thái: ${regulation.status} • Bản: v${regulation.version}',
                 style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
               ),
               const SizedBox(height: 4),
               Text(
-                toVnDate(regulation.effectiveDate).isEmpty
-                    ? (regulation.author.isNotEmpty ? 'Ban hành bởi: ${regulation.author}' : '')
-                    : (regulation.author.isNotEmpty
-                        ? 'Ban hành bởi: ${regulation.author} • Hiệu lực: ${toVnDate(regulation.effectiveDate)}'
-                        : 'Hiệu lực: ${toVnDate(regulation.effectiveDate)}'),
+                regulation.effectiveDate.isEmpty
+                    ? ''
+                    : 'Hiệu lực: ${toVnDate(regulation.effectiveDate)}'
+                        '${regulation.expiryDate != null && regulation.expiryDate!.isNotEmpty ? ' • Hết lực: ${toVnDate(regulation.expiryDate!)}' : ''}',
                 style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
               ),
               const SizedBox(height: 14),
@@ -208,6 +216,7 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
 
   void _showCreateRegulationModal() {
     final titleCtrl = TextEditingController();
+    final codeCtrl = TextEditingController();
     final summaryCtrl = TextEditingController();
     final contentCtrl = TextEditingController();
     final effectiveDateCtrl = TextEditingController(
@@ -215,7 +224,7 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
     );
     final versionCtrl = TextEditingController(text: '1.0');
     String selectedCategory = 'Nội quy lao động';
-    String selectedScope = 'Toàn công ty';
+    String selectedScopeBranchId = '';
     String selectedStatus = 'hiệu lực';
     bool isPinned = false;
 
@@ -266,7 +275,17 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                // 2. Danh mục quy định
+                // 2. Mã nội quy * (bắt buộc theo contentFields.regulation)
+                TextField(
+                  controller: codeCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Mã nội quy *',
+                    hintText: 'VD: NQ-ATLD-01',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // 3. Danh mục quy định
                 DropdownButtonFormField<String>(
                   initialValue: selectedCategory,
                   decoration: InputDecoration(
@@ -286,26 +305,26 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
                   },
                 ),
                 const SizedBox(height: 12),
-                // 3. Phạm vi áp dụng
+                // 4. Phạm vi áp dụng
                 DropdownButtonFormField<String>(
-                  initialValue: selectedScope,
+                  initialValue: selectedScopeBranchId,
                   decoration: InputDecoration(
                     labelText: 'Phạm vi áp dụng',
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   items: [
-                    const DropdownMenuItem(value: 'Toàn công ty', child: Text('🏢 Toàn công ty')),
+                    const DropdownMenuItem(value: '', child: Text('🏢 Toàn công ty')),
                     ..._branches.map((b) => DropdownMenuItem(
-                          value: b.code.toUpperCase(),
-                          child: Text('🏬 Chi nhánh ${b.name} (${b.code.toUpperCase()})'),
+                          value: b.id,
+                          child: Text('🏬 Chi nhánh ${b.name} (${b.branchCode})'),
                         )),
                   ],
                   onChanged: (val) {
-                    if (val != null) setModalState(() => selectedScope = val);
+                    if (val != null) setModalState(() => selectedScopeBranchId = val);
                   },
                 ),
                 const SizedBox(height: 12),
-                // 4. Trạng thái & Ngày hiệu lực (Row 2 cột)
+                // 5. Trạng thái & Ngày hiệu lực (Row 2 cột)
                 Row(
                   children: [
                     Expanded(
@@ -339,7 +358,7 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                // 5. Tóm tắt ngắn
+                // 6. Tóm tắt ngắn
                 TextField(
                   controller: summaryCtrl,
                   decoration: InputDecoration(
@@ -349,7 +368,7 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                // 6. Toàn văn điều khoản nội quy *
+                // 7. Toàn văn điều khoản nội quy *
                 TextField(
                   controller: contentCtrl,
                   maxLines: 4,
@@ -360,7 +379,7 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                // 7. Checkbox ghim lên đầu
+                // 8. Checkbox ghim lên đầu
                 Row(
                   children: [
                     Checkbox(
@@ -394,19 +413,26 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
                       );
                       return;
                     }
+                    if (codeCtrl.text.trim().isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Vui lòng nhập mã nội quy')),
+                      );
+                      return;
+                    }
+                    final effectiveIso = toIsoDate(effectiveDateCtrl.text.trim());
 
                     try {
                       final created = await _repo.createRegulation(
                         title: titleCtrl.text.trim(),
                         category: selectedCategory,
                         content: contentCtrl.text.trim(),
+                        regulationCode: codeCtrl.text.trim(),
                         summary: summaryCtrl.text.trim().isNotEmpty ? summaryCtrl.text.trim() : null,
-                        scope: selectedScope,
+                        scopeBranchId: selectedScopeBranchId.isEmpty ? null : selectedScopeBranchId,
                         status: selectedStatus,
-                        effectiveDate: toVnDate(effectiveDateCtrl.text.trim()),
+                        effectiveDate: effectiveIso,
                         version: versionCtrl.text.trim(),
                         pinned: isPinned,
-                        author: '${widget.currentUser.name} (${widget.currentUser.roleTitle})',
                       );
 
                       if (sheetCtx.mounted) {
@@ -562,11 +588,10 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
                                         ],
                                       ],
                                     ),
-                                    if (r.scope.isNotEmpty)
-                                      Text(
-                                        r.scope,
-                                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                                      ),
+                                    Text(
+                                      _scopeLabel(r.scopeBranchId),
+                                      style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                                    ),
                                   ],
                                 ),
                                 const SizedBox(height: 8),
@@ -584,11 +609,13 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
                                 const SizedBox(height: 8),
                                 Row(
                                   children: [
-                                    if (r.author.isNotEmpty) ...[
-                                      const FaIcon(FontAwesomeIcons.user, size: 13, color: AppColors.textSecondary),
+                                    if (r.regulationCode.isNotEmpty) ...[
+                                      const FaIcon(FontAwesomeIcons.hashtag, size: 13, color: AppColors.textSecondary),
                                       const SizedBox(width: 4),
-                                      Text(r.author, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-                                    ] else if (r.effectiveDate.isNotEmpty) ...[
+                                      Text(r.regulationCode, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                                    ],
+                                    if (r.effectiveDate.isNotEmpty) ...[
+                                      const SizedBox(width: 10),
                                       const FaIcon(FontAwesomeIcons.calendar, size: 13, color: AppColors.textSecondary),
                                       const SizedBox(width: 4),
                                       Text(toVnDate(r.effectiveDate), style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),

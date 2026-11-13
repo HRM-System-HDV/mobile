@@ -87,9 +87,11 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
       final results = await Future.wait([
         EmployeeRepository().getEmployees(),
         ShiftRepository().getShifts(),
+        ShiftRepository().getTemplates(),
       ]);
       final emps = results[0] as List<Map<String, dynamic>>;
       final shifts = results[1] as List<ApiShiftModel>;
+      final templates = results[2] as List<Map<String, dynamic>>;
       if (!mounted) return;
       final nameById = <String, String>{};
       final roleById = <String, String>{};
@@ -101,6 +103,11 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
         roleById[id] = e['role']?.toString() ?? '';
         phoneById[id] = e['phone']?.toString() ?? '';
       }
+      final templateNameById = <String, String>{
+        for (final t in templates)
+          if ((t['id']?.toString() ?? '').isNotEmpty)
+            t['id'].toString(): t['name']?.toString() ?? '',
+      };
       final colleagues = emps
           .where((e) => (e['id']?.toString() ?? '').isNotEmpty)
           .map((e) {
@@ -115,16 +122,17 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
           .toList();
       final grouped = <String, Map<String, List<ShiftStaffMember>>>{};
       for (final s in shifts) {
-        if (s.date.trim().isEmpty) continue;
-        final key = _dateKey(s.date);
-        final label = '${s.displayTemplate} (${s.timeLabel})';
+        if (s.workDate.trim().isEmpty) continue;
+        final key = _dateKey(s.workDate);
+        final templateName = templateNameById[s.templateId] ?? s.templateId;
+        final label = '$templateName (${s.timeLabel})';
         final staff = ShiftStaffMember(
           id: s.employeeId ?? s.id,
           shiftId: s.id,
           name: (s.employeeId != null && nameById.containsKey(s.employeeId))
               ? nameById[s.employeeId]!
               : 'Chưa phân công',
-          role: s.template,
+          role: templateName,
           phone: (s.employeeId != null && phoneById.containsKey(s.employeeId))
               ? phoneById[s.employeeId]!
               : '',
@@ -289,8 +297,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
           'shiftRole': widget.shift.role,
           'reason': reason,
           'senderName': me.name,
-          'senderRole': me.roleTitle.isNotEmpty ? me.roleTitle : me.role,
-          'senderPhone': me.phone,
+          'senderRole': me.role,
         };
 
     switch (widget.actionType) {
@@ -355,8 +362,8 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
         'title': title,
         'content': content,
         'employeeId': me.id,
-        // Gửi MÃ chi nhánh (slug) lên API, tên chỉ dùng hiển thị.
-        if (widget.shift.branchSlug.isNotEmpty) 'branchSlug': widget.shift.branchSlug,
+        // Gửi id chi nhánh lên API, tên chỉ dùng hiển thị.
+        if (widget.shift.branchId.isNotEmpty) 'branchId': widget.shift.branchId,
         if (widget.shift.id.isNotEmpty) 'sourceShiftId': widget.shift.id,
         if (targetShiftId != null) 'targetShiftId': targetShiftId,
         if (targetEmployeeId != null) 'targetEmployeeId': targetEmployeeId,

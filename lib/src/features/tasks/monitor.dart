@@ -54,7 +54,7 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
   // Lỗi tải dữ liệu: hiển thị rõ thay vì hiện "không có dữ liệu" như thật.
   String? _loadError;
   bool _loading = false;
-  String? _loadedBranchSlug;
+  String? _loadedBranchId;
   // Token phiên tải để kết quả cũ không ghi đè kết quả mới khi đổi chi nhánh.
   int _requestToken = 0;
 
@@ -70,7 +70,7 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
     // Lấy chi nhánh đang chọn để lọc đúng phạm vi (BranchSelector có thật sự
     // ảnh hưởng dữ liệu, không chỉ là trang trí).
     final branch = BranchScope.selectedBranch(context);
-    final branchSlug = branch?.slug;
+    final branchId = branch?.id;
     // Token phiên tải: nếu người dùng đổi chi nhánh giữa chừng thì kết quả
     // cũ không được ghi đè lên kết quả mới.
     _requestToken += 1;
@@ -82,12 +82,18 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
       });
     }
     try {
-      final emps = await EmployeeRepository().getEmployees(branchSlug: branchSlug);
-      final list = await _attendanceRepo.getAttendance(branchSlug: branchSlug);
+      final emps = await EmployeeRepository().getEmployees(branchId: branchId);
+      final list = await _attendanceRepo.getAttendance(branchId: branchId);
       // Map ca thật từ API shifts (fallback 'Chưa rõ' khi không khớp)
       List<ApiShiftModel> apiShifts = [];
+      final templateNames = <String, String>{};
       try {
-        apiShifts = await ShiftRepository().getShifts(branchSlug: branchSlug);
+        apiShifts = await ShiftRepository().getShifts(branchId: branchId);
+        for (final t in await ShiftRepository().getTemplates()) {
+          final id = t['id']?.toString() ?? '';
+          final name = t['name']?.toString() ?? '';
+          if (id.isNotEmpty && name.isNotEmpty) templateNames[id] = name;
+        }
       } catch (_) {
         apiShifts = [];
       }
@@ -101,7 +107,7 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
       }
       final shiftNameById = <String, String>{};
       for (final s in apiShifts) {
-        shiftNameById[s.id] = s.template.isNotEmpty ? s.template : 'Chưa rõ';
+        shiftNameById[s.id] = templateNames[s.templateId] ?? 'Chưa rõ';
       }
       final apiList = list.map((m) {
         StaffAttendanceStatus st = StaffAttendanceStatus.present;
@@ -126,7 +132,7 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
       }).toList();
       setState(() {
         _staffList = apiList;
-        _loadedBranchSlug = branchSlug;
+        _loadedBranchId = branchId;
         _loading = false;
       });
     } catch (e) {
@@ -145,8 +151,8 @@ class _StaffMonitorScreenState extends State<StaffMonitorScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     // Đổi chi nhánh ở BranchSelector thì phải tải lại dữ liệu cho đúng phạm vi.
-    final slug = BranchScope.selectedBranch(context)?.slug;
-    if (slug != _loadedBranchSlug && !_loading) {
+    final branchId = BranchScope.selectedBranch(context)?.id;
+    if (branchId != _loadedBranchId && !_loading) {
       _fetchStaffAttendance();
     }
   }

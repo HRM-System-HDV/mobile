@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
-import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
 import 'leave_repository.dart';
@@ -34,24 +33,35 @@ class LeaveRequestScreen extends StatefulWidget {
 
 class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
   final LeaveRepository _leaveRepo = LeaveRepository();
-  String? _loadedUserId;
+  String? _loadedEmployeeId;
   String? _loadError;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final uid = UserScope.currentUser(context)?.id ?? '';
-    if (_loadedUserId != uid) {
-      _loadedUserId = uid;
+    final empId = UserScope.currentUser(context)?.employeeId ?? '';
+    if (_loadedEmployeeId != empId) {
+      _loadedEmployeeId = empId;
       _fetchRequests();
     }
   }
 
   Future<void> _fetchRequests() async {
     try {
-      final uid = UserScope.currentUser(context)?.id ?? '';
+      // Đơn nghỉ phép keyed theo UUID nhân sự; id tài khoản identity không có
+      // đơn nào nên backend sẽ trả rỗng.
+      final empId = UserScope.currentUser(context)?.employeeId ?? '';
+      if (empId.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _requests = [];
+            _loadError = 'Tài khoản chưa gắn hồ sơ nhân sự.';
+          });
+        }
+        return;
+      }
       // Không lọc thì nhân viên xem được đơn nghỉ của cả chi nhánh.
-      final list = await _leaveRepo.getRequests(employeeId: uid.isEmpty ? null : uid);
+      final list = await _leaveRepo.getRequests(employeeId: empId);
       if (mounted) {
         final apiItems = list.where((m) => m.type == 'leave').map((m) {
           final title = m.title.replaceFirst('Đơn xin nghỉ: ', '');
@@ -86,10 +96,62 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
 
   List<LeaveRequestItem> _requests = [];
 
+  /// Backend (`contentFields.request`) chỉ nhận ngày nghỉ dạng ISO YYYY-MM-DD.
+  String _isoDate(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  Widget _buildDateField({
+    required String label,
+    required DateTime value,
+    required DateTime firstDate,
+    required DateTime lastDate,
+    required ValueChanged<DateTime> onPicked,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+        const SizedBox(height: 6),
+        InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () async {
+            final picked = await showDatePicker(
+              context: context,
+              initialDate: value,
+              firstDate: firstDate,
+              lastDate: lastDate,
+            );
+            if (picked != null) onPicked(picked);
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey.shade400),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                const FaIcon(FontAwesomeIcons.calendarDay, size: 16, color: AppColors.primary),
+                const SizedBox(width: 10),
+                Text(
+                  vnDate(value),
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                const Text('Đổi ngày', style: TextStyle(fontSize: 12.5, color: AppColors.primary)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   void _showCreateModal() {
     String selectedType = 'Nghỉ phép năm';
     String selectedDuration = 'Cả ngày';
     DateTime selectedDate = DateTime.now().add(const Duration(days: 1));
+    DateTime selectedEndDate = DateTime.now().add(const Duration(days: 1));
     final reasonController = TextEditingController();
 
     showModalBottomSheet(
@@ -155,38 +217,23 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
                 onChanged: (val) => setModalState(() => selectedDuration = val!),
               ),
               const SizedBox(height: 12),
-              const Text('Ngày nghỉ', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-              const SizedBox(height: 6),
-              InkWell(
-                borderRadius: BorderRadius.circular(10),
-                onTap: () async {
-                  final picked = await showDatePicker(
-                    context: ctx,
-                    initialDate: selectedDate,
-                    firstDate: DateTime.now().subtract(const Duration(days: 30)),
-                    lastDate: DateTime.now().add(const Duration(days: 365)),
-                  );
-                  if (picked != null) setModalState(() => selectedDate = picked);
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey.shade400),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    children: [
-                      const FaIcon(FontAwesomeIcons.calendarDay, size: 16, color: AppColors.primary),
-                      const SizedBox(width: 10),
-                      Text(
-                        vnDate(selectedDate),
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                      ),
-                      const Spacer(),
-                      const Text('Đổi ngày', style: TextStyle(fontSize: 12.5, color: AppColors.primary)),
-                    ],
-                  ),
-                ),
+              _buildDateField(
+                label: 'Ngày nghỉ',
+                value: selectedDate,
+                firstDate: DateTime.now().subtract(const Duration(days: 30)),
+                lastDate: DateTime.now().add(const Duration(days: 365)),
+                onPicked: (d) => setModalState(() {
+                  selectedDate = d;
+                  if (selectedEndDate.isBefore(d)) selectedEndDate = d;
+                }),
+              ),
+              const SizedBox(height: 12),
+              _buildDateField(
+                label: 'Đến ngày',
+                value: selectedEndDate,
+                firstDate: selectedDate,
+                lastDate: DateTime.now().add(const Duration(days: 365)),
+                onPicked: (d) => setModalState(() => selectedEndDate = d),
               ),
               const SizedBox(height: 12),
               const Text('Lý do nghỉ', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
@@ -210,19 +257,20 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
                     );
                     return;
                   }
-                  final dateStr = vnDate(selectedDate);
+                  final dateStr = selectedEndDate == selectedDate
+                      ? vnDate(selectedDate)
+                      : '${vnDate(selectedDate)} - ${vnDate(selectedEndDate)}';
                   final user = UserScope.currentUser(context);
-                  final empId = user?.id ?? '';
+                  final empId = user?.employeeId ?? '';
                   if (empId.isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         backgroundColor: AppColors.error,
-                        content: Text('❌ Không xác định được nhân sự đang đăng nhập'),
+                        content: Text('❌ Tài khoản chưa gắn hồ sơ nhân sự'),
                       ),
                     );
                     return;
                   }
-                  final branchSlug = BranchScope.selectedBranch(context)?.slug ?? user?.branchSlug ?? '';
 
                   try {
                     await _leaveRepo.createRequest({
@@ -230,7 +278,8 @@ class _LeaveRequestScreenState extends State<LeaveRequestScreen> {
                       'title': 'Đơn xin nghỉ: $selectedType',
                       'content': '$dateStr ($selectedDuration) - Lý do: $reason',
                       'employeeId': empId,
-                      if (branchSlug.isNotEmpty) 'branchSlug': branchSlug,
+                      'leaveStartDate': _isoDate(selectedDate),
+                      'leaveEndDate': _isoDate(selectedEndDate),
                     });
                     if (modalCtx.mounted) {
                       Navigator.pop(modalCtx);

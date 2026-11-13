@@ -1,14 +1,16 @@
-/// Yêu cầu nội bộ — khớp schema docs/A §6.
-/// `type`: leave/overtime/advance/other. `status`: pending/approved/rejected.
+/// Yêu cầu nội bộ — integration-service `types` = leave/advance/shift_swap/work_supplement.
+/// `status`: pending/approved/rejected. Id và branchId/employeeId là UUID.
 /// Duyệt/từ chối tự sinh thông báo. Chỉ xóa khi đang pending.
 class LeaveRequestModel {
   final String id;
   final String type;
   final String employeeId;
-  final String? branchSlug;
+  final String? branchId;
   final String title;
   final String content;
   final String? attachmentUrl;
+  final String? leaveStartDate;
+  final String? leaveEndDate;
   final String status;
   final String? reviewedBy;
   final String? reviewNote;
@@ -19,10 +21,12 @@ class LeaveRequestModel {
     required this.id,
     required this.type,
     required this.employeeId,
-    this.branchSlug,
+    this.branchId,
     required this.title,
     required this.content,
     this.attachmentUrl,
+    this.leaveStartDate,
+    this.leaveEndDate,
     required this.status,
     this.reviewedBy,
     this.reviewNote,
@@ -34,10 +38,12 @@ class LeaveRequestModel {
         id: j['id']?.toString() ?? '',
         type: j['type']?.toString() ?? 'leave',
         employeeId: j['employeeId']?.toString() ?? '',
-        branchSlug: j['branchSlug']?.toString(),
+        branchId: j['branchId']?.toString(),
         title: j['title']?.toString() ?? '',
         content: j['content']?.toString() ?? '',
         attachmentUrl: j['attachmentUrl']?.toString(),
+        leaveStartDate: j['leaveStartDate']?.toString(),
+        leaveEndDate: j['leaveEndDate']?.toString(),
         status: j['status']?.toString() ?? 'pending',
         reviewedBy: j['reviewedBy']?.toString(),
         reviewNote: j['reviewNote']?.toString(),

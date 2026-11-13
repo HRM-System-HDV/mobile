@@ -50,7 +50,6 @@ UserModel _resolveUser(BuildContext context, GoRouterState state) {
     name: '',
     email: '',
     role: 'staff',
-    roleTitle: 'Nhân viên',
   );
 }
 
@@ -249,7 +248,8 @@ class AppRouter {
           return PersonalInfoScreen(
             name: me.name,
             email: me.email,
-            phone: me.phone,
+            // SĐT không có trong token user — màn hồ sơ tự đọc từ hồ sơ nhân sự.
+            phone: '',
             isManager: me.canManage,
             user: me,
           );

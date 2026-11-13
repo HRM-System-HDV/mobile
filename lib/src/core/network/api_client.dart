@@ -35,7 +35,6 @@ class ApiClient {
   static const String _kRefreshToken = 'hrm.refreshToken';
   static const String _kDeviceSessionId = 'hrm.deviceSessionId';
 
-  static String? _globalCookie;
   static String? _globalAccessToken;
   static String? _globalRefreshToken;
   static String? _globalDeviceSessionId;
@@ -61,19 +60,16 @@ class ApiClient {
         timeout = timeout ?? CompanyConfig.apiTimeout;
 
   void setSession({
-    String? cookie,
     String? accessToken,
     String? refreshToken,
     String? deviceSessionId,
   }) {
-    if (cookie != null) _globalCookie = cookie;
     if (accessToken != null) _globalAccessToken = accessToken;
     if (refreshToken != null) _globalRefreshToken = refreshToken;
     if (deviceSessionId != null) _globalDeviceSessionId = deviceSessionId;
   }
 
   static void clearSession() {
-    _globalCookie = null;
     _globalAccessToken = null;
     _globalRefreshToken = null;
     _globalDeviceSessionId = null;
@@ -92,12 +88,9 @@ class ApiClient {
     final sameOrigin =
         uri.scheme == base.scheme && uri.host == base.host && uri.port == base.port;
     if (!sameOrigin || !uri.path.startsWith('/api/files/')) return null;
-    final h = <String, String>{};
-    final cookie = _globalCookie;
-    if (cookie != null) h['Cookie'] = cookie;
     final token = _globalAccessToken;
-    if (token != null) h['Authorization'] = 'Bearer $token';
-    return h;
+    if (token == null) return null;
+    return {'Authorization': 'Bearer $token'};
   }
 
   /// Bật thì ghi token vào Keychain/Keystore, tắt thì xóa bản đã lưu.
@@ -158,18 +151,9 @@ class ApiClient {
     onSessionExpired?.call();
   }
 
-  static void _captureCookie(http.Response res) {
-    final setCookie = res.headers['set-cookie'];
-    if (setCookie != null && setCookie.contains('hrm-session')) {
-      _globalCookie = setCookie.split(';').first;
-    }
-  }
-
   Map<String, String> _headers({bool json = true}) {
     final h = <String, String>{};
     if (json) h['Content-Type'] = 'application/json';
-    final cookie = _globalCookie;
-    if (cookie != null) h['Cookie'] = cookie;
     final token = _globalAccessToken;
     if (token != null) h['Authorization'] = 'Bearer $token';
     h.addAll(_deviceHeaders);
@@ -274,7 +258,6 @@ class ApiClient {
       if (access == null || access.isEmpty) return false;
       _globalAccessToken = access;
       _globalRefreshToken = data['refreshToken']?.toString() ?? refreshToken;
-      _captureCookie(res);
       if (_remember) await _writeTokens();
       return true;
     } catch (_) {
@@ -300,7 +283,6 @@ class ApiClient {
   /// POST JSON, trả về `data` trong envelope.
   Future<dynamic> postJson(String path, Map<String, dynamic> payload) async {
     final res = await _send('POST', Uri.parse('$baseUrl$path'), body: jsonEncode(payload));
-    _captureCookie(res);
     return _unwrap(res);
   }
 

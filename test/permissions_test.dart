@@ -7,7 +7,6 @@ UserModel _user(String role) => UserModel(
       name: 'User $role',
       email: '$role@company.com',
       role: role,
-      roleTitle: 'Nhân viên',
     );
 
 void main() {

@@ -36,6 +36,8 @@ class _HomeScreenState extends State<HomeScreen> {
   ShiftDetail? _checkedInShift;
   DateTime? _checkedInTime;
   List<ApiShiftModel> _todayShifts = [];
+  /// Tên ca mẫu theo `templateId` — `/api/shifts` chỉ trả id, không trả tên.
+  Map<String, String> _templateNames = const {};
   final WifiConfigRepository _wifiRepo = WifiConfigRepository();
   final TaskRepository _taskRepo = TaskRepository();
   List<WifiConfigModel> _wifiConfigs = [];
@@ -47,9 +49,16 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _tasksError;
   String? _hardwareBssid;
   String? _hardwareSsid;
+
+  /// Đơn giá giờ công chỉ có trong hồ sơ nhân sự
+  /// (GET /api/employees/:employeeId), token user không có trường này.
+  double _hourlySalary = 0;
   final NetworkInfo _networkInfo = NetworkInfo();
 
   UserModel get currentUser => (mounted ? UserScope.currentUser(context) : null) ?? widget.currentUser;
+
+  /// UUID hồ sơ nhân sự — work-service chỉ nhận giá trị này cho chấm công.
+  String get _employeeId => currentUser.employeeId ?? '';
 
   @override
   void initState() {
@@ -79,51 +88,68 @@ class _HomeScreenState extends State<HomeScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final branch = BranchScope.selectedBranch(context);
-    final key = branch?.code ?? '__all__';
+    final key = branch?.id ?? '__all__';
     if (_loadedWifiBranchKey != key) {
       _loadedWifiBranchKey = key;
-      _fetchWifiConfigs(branchCode: branch?.code);
+      _fetchWifiConfigs(branchId: branch?.id);
     }
     final userKey = currentUser.id.isNotEmpty ? currentUser.id : currentUser.email;
     if (_loadedShiftUserKey != userKey) {
       _loadedShiftUserKey = userKey;
-      _fetchTodayShifts(employeeId: userKey.isNotEmpty ? userKey : null);
-      _refreshAvatar();
+      _fetchTodayShifts(employeeId: currentUser.employeeId);
+      _refreshEmployeeProfileData();
     }
   }
 
-  /// Avatar nằm ở organization-service chứ không có trong /api/auth/me, nên phải
-  /// đọc lại hồ sơ để ảnh sửa từ nơi khác vẫn hiện ở Trang chủ. Lỗi đọc hồ sơ
+  /// Avatar và đơn giá lương nằm ở organization-service chứ không có trong
+  /// /api/auth/me, nên phải đọc lại hồ sơ nhân sự theo employeeId. Lỗi đọc hồ sơ
   /// không được làm hỏng màn Trang chủ.
-  Future<void> _refreshAvatar() async {
+  Future<void> _refreshEmployeeProfileData() async {
     final me = currentUser;
-    if (me.id.isEmpty) return;
+    final employeeId = me.employeeId;
+    if (employeeId == null || employeeId.isEmpty) return;
     Map<String, dynamic>? profile;
     try {
-      profile = await EmployeeRepository().getEmployee(me.id);
+      profile = await EmployeeRepository().getEmployee(employeeId);
     } catch (_) {
       return;
     }
     if (!mounted) return;
     final current = UserScope.currentUser(context);
     if (current == null || current.id != me.id) return;
-    final avatar = profile?['avatar']?.toString();
-    if (avatar == null || avatar == current.avatarUrl) return;
-    UserScope.setUser(context, current.copyWith(avatarUrl: avatar));
+    final salary = double.tryParse(profile?['salary']?.toString() ?? '') ?? 0;
+    final avatar = profile?['avatar']?.toString() ?? '';
+    if (avatar.isNotEmpty && avatar != current.avatarUrl) {
+      UserScope.setUser(context, current.copyWith(avatarUrl: avatar));
+    }
+    setState(() {
+      _hourlySalary = profile?['salaryType'] == 'hourly' ? salary : 0;
+    });
   }
 
   Future<void> _fetchTodayShifts({String? employeeId}) async {
     try {
       final shifts = await ShiftRepository().getShifts(
-        employeeId: employeeId ?? (currentUser.id.isNotEmpty ? currentUser.id : null),
+        employeeId: employeeId ?? currentUser.employeeId,
       );
+      final templateNames = <String, String>{};
+      try {
+        for (final t in await ShiftRepository().getTemplates()) {
+          final id = t['id']?.toString() ?? '';
+          final name = t['name']?.toString() ?? '';
+          if (id.isNotEmpty && name.isNotEmpty) templateNames[id] = name;
+        }
+      } catch (_) {
+        // Thiếu danh mục ca mẫu chỉ làm mất nhãn hiển thị, không được ẩn lịch.
+      }
       if (mounted) {
         setState(() {
           _todayShifts = shifts;
+          _templateNames = templateNames;
           _shiftsError = null;
         });
         ShiftReminders.reschedule(
-          employeeId: currentUser.id.isNotEmpty ? currentUser.id : null,
+          employeeId: currentUser.employeeId,
           shifts: shifts,
         );
       }
@@ -137,9 +163,9 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _fetchWifiConfigs({String? branchCode}) async {
+  Future<void> _fetchWifiConfigs({String? branchId}) async {
     try {
-      final configs = await _wifiRepo.getWifiConfigs(branch: branchCode ?? '');
+      final configs = await _wifiRepo.getWifiConfigs(branchId: branchId ?? '');
       if (mounted) {
         setState(() {
           _wifiConfigs = configs;
@@ -305,8 +331,9 @@ class _HomeScreenState extends State<HomeScreen> {
     return 'Chào buổi tối 👋';
   }
 
-  /// Ảnh đại diện lấy từ hồ sơ đã đồng bộ qua API (UserScope). Khi ảnh đang tải
-  /// hoặc lỗi thì hiện icon vai trò bên dưới, không giữ trạng thái lỗi vĩnh viễn.
+  /// Ảnh đại diện lấy từ `UserScope` (do _refreshEmployeeProfileData đồng bộ về
+  /// từ hồ sơ nhân sự). Khi ảnh đang tải hoặc lỗi thì hiện icon vai trò bên dưới,
+  /// không giữ trạng thái lỗi vĩnh viễn.
   Widget _buildAvatar() {
     final fallback = ColoredBox(
       color: AppColors.primary.withValues(alpha: 0.12),
@@ -583,6 +610,7 @@ class _HomeScreenState extends State<HomeScreen> {
       apiShifts: _todayShifts,
       user: currentUser,
       branchName: branch?.name,
+      templateNames: _templateNames,
       activeCheckedInShift: _checkedInShift,
     );
 
@@ -764,11 +792,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
                           try {
                             await AttendanceRepository().checkIn(
-                              employeeId: currentUser.id,
-                              shiftId: targetShift.id.isNotEmpty ? targetShift.id : targetShift.shiftName,
+                              employeeId: _employeeId,
+                              shiftId: targetShift.id,
                               wifiSsid: wifiSsid,
                               wifiBssid: effectiveBssid,
-                              checkinTime: '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
                             );
                             if (!context.mounted) return;
                             Navigator.pop(context);
@@ -777,9 +804,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               _checkedInTime = now;
                             });
                             // Đã vào ca: hủy các nhắc check-in, giữ nhắc ra ca.
-                            ShiftReminders.reschedule(
-                              employeeId: currentUser.id.isNotEmpty ? currentUser.id : null,
-                            );
+                            ShiftReminders.reschedule(employeeId: currentUser.employeeId);
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 backgroundColor: AppColors.success,
@@ -838,8 +863,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final bool isHourly = user.isHourlySalary;
     final double? hoursWorked = shift.hours;
     // Chỉ tạm tính khi có giờ ca và đơn giá thật; không bịa số giờ mặc định.
-    final int? earnedMoney = (hoursWorked != null && user.hourlySalary > 0)
-        ? (hoursWorked * user.hourlySalary).toInt()
+    final int? earnedMoney = (hoursWorked != null && _hourlySalary > 0)
+        ? (hoursWorked * _hourlySalary).toInt()
         : null;
 
     showModalBottomSheet(
@@ -994,7 +1019,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    'Tiền công ca (${hoursWorked ?? '—'}h × ${user.hourlySalary > 0 ? _formatCurrency(user.hourlySalary) : '—'} ₫/h):',
+                                    'Tiền công ca (${hoursWorked ?? '—'}h × ${_hourlySalary > 0 ? _formatCurrency(_hourlySalary) : '—'} ₫/h):',
                                     style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                                   ),
                                   Text(
@@ -1034,13 +1059,10 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: () async {
-                  final shiftOut = _checkedInShift;
-                  final now = DateTime.now();
                   try {
                     await AttendanceRepository().checkOut(
-                      employeeId: currentUser.id,
-                      shiftId: shiftOut != null && shiftOut.id.isNotEmpty ? shiftOut.id : shiftOut?.shiftName,
-                      checkoutTime: '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
+                      employeeId: _employeeId,
+                      shiftId: shift.id,
                     );
                     if (!context.mounted) return;
                     Navigator.pop(context);
@@ -1049,14 +1071,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       _checkedInTime = null;
                     });
                     // Đã ra ca: hủy các nhắc quên check-out.
-                    ShiftReminders.reschedule(
-                      employeeId: currentUser.id.isNotEmpty ? currentUser.id : null,
-                    );
+                    ShiftReminders.reschedule(employeeId: currentUser.employeeId);
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         backgroundColor: AppColors.success,
                         // API checkout không trả số tiền được cộng nên không khẳng định đã cộng công.
-                        content: Text('✅ Chấm công ra ca ${shiftOut?.shiftName ?? ''} thành công!'),
+                        content: Text('✅ Chấm công ra ca ${shift.shiftName} thành công!'),
                       ),
                     );
                   } catch (e) {

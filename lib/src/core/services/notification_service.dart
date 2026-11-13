@@ -173,10 +173,12 @@ class ShiftReminders {
       final vibrate = NotificationSettingsCache.get('vibrateEnabled');
 
       for (final shift in todayShifts) {
-        if (toVnDate(shift.date) != today) continue;
+        if (toVnDate(shift.workDate) != today) continue;
         final start = parseVnDate('$today ${shift.scheduledStart}');
         final end = parseVnDate('$today ${shift.scheduledEnd}');
-        final name = shift.template.isNotEmpty ? shift.template : 'Ca làm việc';
+        // shifts không mang tên mẫu ca (chỉ templateId), nên nhắc ca gọi tên
+        // theo khung giờ.
+        final name = shift.timeLabel == '—' ? 'Ca làm việc' : shift.timeLabel;
         final checkedIn = (shift.checkIn ?? '').isNotEmpty;
         final checkedOut = (shift.checkOut ?? '').isNotEmpty;
 

@@ -16,7 +16,6 @@ class StaffInShift {
   final String id;
   final String name;
   final String role;
-  final String avatarUrl;
   final String checkInStatus; // 'checked_in', 'in_progress', 'not_yet'
   final String checkInTime;
   final String checkOutTime;
@@ -25,15 +24,15 @@ class StaffInShift {
   /// Id dòng ca thật từ `GET /api/shifts` — cần cho lượt bổ sung chấm công.
   final String shiftId;
 
-  /// Trạng thái dòng chấm công API trả về; 'missed' = ca bị bỏ qua vì quá hạn
-  /// chốt ra (đã check-in nhưng chưa checkOut trong cửa sổ cho phép).
+  /// `attendanceState` của ca: not_started | working | completed |
+  /// missed_checkin | missed_checkout; 'missed_checkout' = ca bị bỏ qua vì quá
+  /// hạn chốt ra (đã check-in nhưng chưa checkOut trong cửa sổ cho phép).
   final String attendanceStatus;
 
   const StaffInShift({
     this.id = '',
     required this.name,
     required this.role,
-    this.avatarUrl = '',
     required this.checkInStatus,
     required this.checkInTime,
     this.checkOutTime = '',
@@ -45,7 +44,7 @@ class StaffInShift {
   /// Ca bị bỏ qua: đã vào ca nhưng không chốt ra trong thời gian cho phép.
   /// `checkOut` được backend giữ nguyên `null` nên ca này không được tính công.
   bool get isSkippedCheckout =>
-      attendanceStatus == 'missed' &&
+      attendanceStatus == 'missed_checkout' &&
       checkInTime.isNotEmpty &&
       checkOutTime.isEmpty;
 }
@@ -105,7 +104,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
   // backend, 0 = tính năng tắt. Màn này chỉ đọc cấu hình để dùng, việc lưu
   // thuộc về màn "Cấu hình chấm công" (PUT /api/attendance/config).
   int _checkoutWindowMinutes = 60;
-  String? _loadedBranchSlug;
+  String? _loadedBranchId;
   String? _loadError;
 
   // Offset tuần so với tuần hiện tại (0: Tuần này, -1: Tuần trước, 1: Tuần sau, -2, 2, ...)
@@ -132,8 +131,8 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final branch = BranchScope.selectedBranch(context);
-    if (_loadedBranchSlug != branch?.slug) {
-      _loadedBranchSlug = branch?.slug;
+    if (_loadedBranchId != branch?.id) {
+      _loadedBranchId = branch?.id;
       _loadGeneralData();
     }
   }
@@ -143,7 +142,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
     try {
       final results = await Future.wait([
         _empRepo.getEmployees(),
-        _shiftRepo.getShifts(branchSlug: branch?.slug),
+        _shiftRepo.getShifts(branchId: branch?.id),
         _shiftRepo.getTemplates(),
       ]);
       // Cấu hình chấm công là dữ liệu phụ: lỗi đọc cấu hình không được làm hỏng
@@ -262,7 +261,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
       final isPast = dayDate.isBefore(_today);
       final dateStr = vnDate(dayDate);
 
-      final shiftsForDay = _apiShifts.where((s) => _matchesDate(s.date, dayDate)).toList();
+      final shiftsForDay = _apiShifts.where((s) => _matchesDate(s.workDate, dayDate)).toList();
       final dayShifts = <GeneralShiftModel>[];
 
       // Dựng danh sách ca theo 3 khung ca mẫu chuẩn từ Backend (Ca Sáng, Ca Chiều, Ca Tối)
@@ -279,7 +278,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
           final addedEmpIds = <String>{};
 
           for (final s in shiftsForDay) {
-            final shiftTName = s.template;
+            final shiftTName = s.templateId;
             if (_matchesShiftTemplate(shiftTName, tName, tId)) {
               final empId = s.employeeId ?? '';
               if (empId.isNotEmpty && !addedEmpIds.contains(empId)) {
@@ -299,7 +298,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
                   checkOutTime: (s.checkOut != null && s.checkOut!.isNotEmpty && s.checkOut != '—') ? s.checkOut! : '',
                   phone: emp['phone']?.toString() ?? '—',
                   shiftId: s.id,
-                  attendanceStatus: s.status,
+                  attendanceStatus: s.attendanceState,
                 ));
               }
             }
@@ -318,7 +317,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
         // Fallback nếu API templates chưa về
         final Map<String, List<ApiShiftModel>> grouped = {};
         for (final s in shiftsForDay) {
-          final key = '${s.scheduledStart}-${s.scheduledEnd}-${s.template}';
+          final key = '${s.scheduledStart}-${s.scheduledEnd}-${s.templateId}';
           grouped.putIfAbsent(key, () => []).add(s);
         }
         for (final entry in grouped.entries) {
@@ -340,13 +339,13 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
                 checkOutTime: (s.checkOut != null && s.checkOut!.isNotEmpty && s.checkOut != '—') ? s.checkOut! : '',
                 phone: emp['phone']?.toString() ?? '—',
                 shiftId: s.id,
-                attendanceStatus: s.status,
+                attendanceStatus: s.attendanceState,
               ));
             }
           }
           dayShifts.add(GeneralShiftModel(
             id: first.id,
-            shiftName: first.template,
+            shiftName: first.templateId,
             startTime: first.scheduledStart,
             endTime: first.scheduledEnd,
             status: isPast ? 'completed' : (isToday ? 'in_progress' : 'upcoming'),

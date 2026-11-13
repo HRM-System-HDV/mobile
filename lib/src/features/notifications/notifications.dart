@@ -225,7 +225,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             shiftTime: m.shiftTime ?? _rawString(metaMap, ['shiftTime', 'time']),
             shiftHours: m.shiftHours ?? _rawString(metaMap, ['shiftHours', 'hours']),
             shiftDate: m.shiftDate ?? _rawString(metaMap, ['shiftDate', 'date']),
-            branch: m.branchSlug ?? _rawString(metaMap, ['branch', 'branchSlug']),
+            branch: m.branchId ?? _rawString(metaMap, ['branch']),
             shiftRole: _rawString(metaMap, ['shiftRole']),
             swapShiftName: _rawString(metaMap, ['swapShiftName']),
             swapShiftTime: _rawString(metaMap, ['swapShiftTime']),
@@ -296,21 +296,25 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _markAllAsRead() async {
-    final unread = _notifications.where((n) => !n.isRead).toList();
+    final unread = _notifications.where((n) => !n.isRead).map((n) => n.id).toList();
     if (unread.isEmpty) return;
-    try {
-      await _repo.markAllRead();
-    } catch (e) {
-      _showError(_errorText(e));
-      return;
-    }
+    // Backend chỉ có PUT /api/notifications/:id/read nên phải gọi từng id.
+    final result = await _runPerId(unread, _repo.markRead);
     if (!mounted) return;
     setState(() {
       for (var item in _notifications) {
-        item.isRead = true;
+        if (result.done.contains(item.id)) {
+          item.isRead = true;
+        }
       }
     });
     _syncUnreadCount();
+    if (result.error != null) {
+      _showError(
+        'Chỉ đánh dấu đã đọc được ${result.done.length}/${unread.length} thông báo. ${_errorText(result.error!)}',
+      );
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         backgroundColor: Colors.green,
@@ -381,87 +385,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         backgroundColor: Colors.green,
         content: Text('✅ Đã đánh dấu đã đọc các thông báo đã chọn'),
         duration: Duration(seconds: 2),
-      ),
-    );
-  }
-
-  void _deleteSelected() {
-    if (_selectedIds.isEmpty) return;
-    final count = _selectedIds.length;
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Xoá thông báo', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-        content: Text('Bạn có chắc chắn muốn xoá $count thông báo đã chọn?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Huỷ'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(dialogContext);
-              final ids = _selectedIds.toList();
-              final result = await _runPerId(ids, _repo.deleteNotification);
-              if (!mounted) return;
-              setState(() {
-                _notifications.removeWhere((n) => result.done.contains(n.id));
-                _isSelecting = false;
-                _selectedIds.clear();
-              });
-              _syncUnreadCount();
-              if (result.error != null) {
-                _showError(
-                  'Chỉ xoá được ${result.done.length}/${ids.length} thông báo. ${_errorText(result.error!)}',
-                );
-                return;
-              }
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  backgroundColor: AppColors.error,
-                  content: Text('🗑️ Đã xoá ${result.done.length} thông báo'),
-                  duration: const Duration(seconds: 2),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.error,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            child: const Text('Xoá'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _deleteSingle(NotificationItem item) async {
-    final index = _notifications.indexOf(item);
-    // Dismissible yêu cầu bỏ item khỏi danh sách ngay; trả lại chỗ cũ nếu API lỗi.
-    setState(() {
-      _notifications.remove(item);
-    });
-    _syncUnreadCount();
-    try {
-      await _repo.deleteNotification(item.id);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _notifications.insert(index.clamp(0, _notifications.length), item);
-      });
-      _syncUnreadCount();
-      _showError(_errorText(e));
-      return;
-    }
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: AppColors.textPrimary,
-        content: Text('🗑️ Đã xoá "${item.title}"'),
-        duration: const Duration(seconds: 3),
       ),
     );
   }
@@ -601,36 +524,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               ),
             ],
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _deleteSingle(item);
-                    },
-                    icon: const FaIcon(FontAwesomeIcons.trashCan, size: 18, color: AppColors.error),
-                    label: const Text('Xoá thông báo', style: TextStyle(color: AppColors.error)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: AppColors.error),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                  ),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () => Navigator.pop(context),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: Colors.grey.shade300),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: Colors.grey.shade300),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: const Text('Đóng', style: TextStyle(color: AppColors.textPrimary)),
-                  ),
-                ),
-              ],
+                child: const Text('Đóng', style: TextStyle(color: AppColors.textPrimary)),
+              ),
             ),
           ],
         ),
@@ -671,7 +575,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          _loadError != null ? 'Kéo xuống để thử lại.' : 'Tất cả thông báo đã được dọn sạch.',
+                          _loadError != null ? 'Kéo xuống để thử lại.' : 'Kéo xuống để tải thông báo mới nhất.',
                           style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                         ),
                       ],
@@ -798,21 +702,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ),
               ),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: count > 0 ? _deleteSelected : null,
-                icon: const FaIcon(FontAwesomeIcons.trashCan, size: 18),
-                label: Text('Xoá ($count)'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.error,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-              ),
-            ),
           ],
         ),
       ),
@@ -822,176 +711,142 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Widget _buildNotificationCard(NotificationItem item) {
     final isSelected = _selectedIds.contains(item.id);
 
-    return Dismissible(
-      key: Key(item.id),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
+    return InkWell(
+      onTap: () {
+        if (_isSelecting) {
+          setState(() {
+            if (isSelected) {
+              _selectedIds.remove(item.id);
+            } else {
+              _selectedIds.add(item.id);
+            }
+          });
+        } else {
+          if (item.isShiftRequest) {
+            _openRequestDetail(item);
+          } else {
+            _showNotificationDetail(item);
+          }
+        }
+      },
+      onLongPress: () {
+        if (!_isSelecting) {
+          setState(() {
+            _isSelecting = true;
+            _selectedIds.add(item.id);
+          });
+        }
+      },
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: AppColors.error,
+          color: item.isRead ? Colors.white : AppColors.primary.withValues(alpha: 0.04),
           borderRadius: BorderRadius.circular(14),
-        ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            FaIcon(FontAwesomeIcons.trashCan, color: Colors.white, size: 24),
-            SizedBox(width: 6),
-            Text('Xoá', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          border: Border.all(
+            color: isSelected
+                ? AppColors.primary
+                : (item.isRead ? Colors.grey.shade200 : AppColors.primary.withValues(alpha: 0.2)),
+            width: isSelected ? 1.5 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
           ],
         ),
-      ),
-      onDismissed: (_) => _deleteSingle(item),
-      child: InkWell(
-        onTap: () {
-          if (_isSelecting) {
-            setState(() {
-              if (isSelected) {
-                _selectedIds.remove(item.id);
-              } else {
-                _selectedIds.add(item.id);
-              }
-            });
-          } else {
-            if (item.isShiftRequest) {
-              _openRequestDetail(item);
-            } else {
-              _showNotificationDetail(item);
-            }
-          }
-        },
-        onLongPress: () {
-          if (!_isSelecting) {
-            setState(() {
-              _isSelecting = true;
-              _selectedIds.add(item.id);
-            });
-          }
-        },
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: item.isRead ? Colors.white : AppColors.primary.withValues(alpha: 0.04),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: isSelected
-                  ? AppColors.primary
-                  : (item.isRead ? Colors.grey.shade200 : AppColors.primary.withValues(alpha: 0.2)),
-              width: isSelected ? 1.5 : 1,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_isSelecting) ...[
+              Checkbox(
+                value: isSelected,
+                activeColor: AppColors.primary,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                onChanged: (val) {
+                  setState(() {
+                    if (val == true) {
+                      _selectedIds.add(item.id);
+                    } else {
+                      _selectedIds.remove(item.id);
+                    }
+                  });
+                },
+              ),
+              const SizedBox(width: 4),
+            ],
+            // Icon
+            CircleAvatar(
+              radius: 20,
+              backgroundColor: item.iconColor.withValues(alpha: 0.12),
+              child: FaIcon(item.icon, color: item.iconColor, size: 20),
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.03),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (_isSelecting) ...[
-                Checkbox(
-                  value: isSelected,
-                  activeColor: AppColors.primary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                  onChanged: (val) {
-                    setState(() {
-                      if (val == true) {
-                        _selectedIds.add(item.id);
-                      } else {
-                        _selectedIds.remove(item.id);
-                      }
-                    });
-                  },
-                ),
-                const SizedBox(width: 4),
-              ],
-              // Icon
-              CircleAvatar(
-                radius: 20,
-                backgroundColor: item.iconColor.withValues(alpha: 0.12),
-                child: FaIcon(item.icon, color: item.iconColor, size: 20),
-              ),
-              const SizedBox(width: 12),
+            const SizedBox(width: 12),
 
-              // Title, content, time
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            item.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontWeight: item.isRead ? FontWeight.w600 : FontWeight.bold,
-                              fontSize: 14,
-                              color: AppColors.textPrimary,
-                            ),
+            // Title, content, time
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: item.isRead ? FontWeight.w600 : FontWeight.bold,
+                            fontSize: 14,
+                            color: AppColors.textPrimary,
                           ),
                         ),
-                        if (!item.isRead) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: const BoxDecoration(
-                              color: AppColors.primary,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      item.content,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.35,
-                        color: item.isRead ? AppColors.textSecondary : AppColors.textPrimary,
                       ),
-                    ),
-
-                    const SizedBox(height: 6),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                              item.time,
-                              style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                            ),
-                            if (item.isShiftRequest) ...[
-                              const SizedBox(width: 8),
-                              _buildRequestStatusBadge(item.requestStatus),
-                            ],
-                          ],
-                        ),
-                        if (!_isSelecting)
-                          InkWell(
-                            onTap: () => _deleteSingle(item),
-                            borderRadius: BorderRadius.circular(6),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                              child: FaIcon(FontAwesomeIcons.trashCan, size: 16, color: Colors.grey.shade400),
-                            ),
+                      if (!item.isRead) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: AppColors.primary,
+                            shape: BoxShape.circle,
                           ),
+                        ),
                       ],
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    item.content,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      height: 1.35,
+                      color: item.isRead ? AppColors.textSecondary : AppColors.textPrimary,
                     ),
-                  ],
-                ),
+                  ),
+
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        item.time,
+                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                      ),
+                      if (item.isShiftRequest) ...[
+                        const SizedBox(width: 8),
+                        _buildRequestStatusBadge(item.requestStatus),
+                      ],
+                    ],
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

@@ -1,14 +1,18 @@
-/// Thông báo — khớp schema docs/A §6.
-/// `targetEmployeeId` null là gửi toàn hệ thống.
+/// Thông báo — khớp bảng `notifications` của integration-service.
+///
+/// Cột thật: id, targetEmployeeId, branchId, title, body, isRead, metadata,
+/// requestType, requestId, senderId, senderName, createdAt. Phần hiển thị chi tiết
+/// (tên ca, ngày, giờ, số giờ, SĐT, vai trò người gửi) do backend nhét vào `metadata`.
 class AppNotificationModel {
   final String id;
   final String? targetEmployeeId;
-  final String? branchSlug;
+  final String? branchId;
   final String title;
   final String body;
   final bool isRead;
   final Map<String, dynamic>? metadata;
   final String? requestType;
+  final String? requestId;
   final String? shiftName;
   final String? shiftDate;
   final String? shiftTime;
@@ -21,12 +25,13 @@ class AppNotificationModel {
   const AppNotificationModel({
     required this.id,
     this.targetEmployeeId,
-    this.branchSlug,
+    this.branchId,
     required this.title,
     required this.body,
     required this.isRead,
     this.metadata,
     this.requestType,
+    this.requestId,
     this.shiftName,
     this.shiftDate,
     this.shiftTime,
@@ -39,22 +44,30 @@ class AppNotificationModel {
 
   factory AppNotificationModel.fromJson(Map<String, dynamic> j) {
     final meta = j['metadata'];
+    final Map<String, dynamic> metadata =
+        meta is Map ? meta.cast<String, dynamic>() : const <String, dynamic>{};
+    String? metaText(String key) {
+      final value = metadata[key];
+      return (value == null || value.toString().trim().isEmpty) ? null : value.toString();
+    }
+
     return AppNotificationModel(
       id: j['id']?.toString() ?? '',
       targetEmployeeId: j['targetEmployeeId']?.toString(),
-      branchSlug: j['branchSlug']?.toString() ?? j['branch']?.toString(),
+      branchId: j['branchId']?.toString(),
       title: j['title']?.toString() ?? '',
       body: j['body']?.toString() ?? '',
       isRead: j['isRead'] == true,
       metadata: meta is Map ? meta.cast<String, dynamic>() : null,
-      requestType: j['requestType']?.toString() ?? j['request_type']?.toString(),
-      shiftName: j['shiftName']?.toString() ?? j['shift']?.toString(),
-      shiftDate: j['shiftDate']?.toString() ?? j['date']?.toString(),
-      shiftTime: j['shiftTime']?.toString() ?? j['time']?.toString(),
-      shiftHours: j['shiftHours']?.toString() ?? j['hours']?.toString(),
-      senderName: j['senderName']?.toString() ?? j['sender']?.toString(),
-      senderRole: j['senderRole']?.toString() ?? j['role']?.toString(),
-      senderPhone: j['senderPhone']?.toString() ?? j['phone']?.toString(),
+      requestType: j['requestType']?.toString(),
+      requestId: j['requestId']?.toString(),
+      shiftName: metaText('shiftName'),
+      shiftDate: metaText('shiftDate'),
+      shiftTime: metaText('shiftTime'),
+      shiftHours: metaText('shiftHours'),
+      senderName: j['senderName']?.toString(),
+      senderRole: metaText('senderRole'),
+      senderPhone: metaText('senderPhone'),
       createdAt: j['createdAt']?.toString(),
     );
   }
@@ -62,19 +75,14 @@ class AppNotificationModel {
   Map<String, dynamic> toJson() => {
         'id': id,
         if (targetEmployeeId != null) 'targetEmployeeId': targetEmployeeId,
-        if (branchSlug != null) 'branchSlug': branchSlug,
+        if (branchId != null) 'branchId': branchId,
         'title': title,
         'body': body,
         'isRead': isRead,
         if (metadata != null) 'metadata': metadata,
         if (requestType != null) 'requestType': requestType,
-        if (shiftName != null) 'shiftName': shiftName,
-        if (shiftDate != null) 'shiftDate': shiftDate,
-        if (shiftTime != null) 'shiftTime': shiftTime,
-        if (shiftHours != null) 'shiftHours': shiftHours,
+        if (requestId != null) 'requestId': requestId,
         if (senderName != null) 'senderName': senderName,
-        if (senderRole != null) 'senderRole': senderRole,
-        if (senderPhone != null) 'senderPhone': senderPhone,
         if (createdAt != null) 'createdAt': createdAt,
       };
 }

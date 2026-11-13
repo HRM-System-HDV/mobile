@@ -8,17 +8,20 @@ import 'package:mobile/src/core/network/api_client.dart';
 import 'package:mobile/src/core/state/user_scope.dart';
 import 'package:mobile/src/core/utils/image_helper.dart';
 import 'package:mobile/src/features/home/home.dart';
+import 'package:mobile/src/features/profile/employee_repository.dart';
+
+import 'repositories/mock_api_client.dart';
 
 const _pngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
-UserModel _user({String? avatarUrl}) => UserModel(
+/// `toSafeUser` (identity-service) không trả `avatarUrl`: ảnh đại diện nằm trong
+/// hồ sơ organization-service. Vì vậy UserModel chỉ còn các cột thật.
+UserModel _user() => const UserModel(
       id: 'e-admin',
       name: 'Trần Hoàng Đạt',
       email: 'thd@gmail.com',
       role: 'admin',
-      roleTitle: 'Quản trị viên',
-      avatarUrl: avatarUrl,
     );
 
 Future<void> _pumpHome(WidgetTester tester, UserModel user) async {
@@ -36,22 +39,28 @@ Future<void> _pumpHome(WidgetTester tester, UserModel user) async {
 }
 
 void main() {
-  testWidgets('Header trang chủ render ảnh đại diện đã đồng bộ từ API', (tester) async {
-    await _pumpHome(tester, _user(avatarUrl: 'data:image/png;base64,$_pngBase64'));
+  test('Ảnh đại diện đồng bộ về từ GET /api/employees/:id và decode được', () async {
+    final mock = MockApiClient();
+    mock.getJsonResponse = {
+      'id': 'e-admin',
+      'avatar': 'data:image/png;base64,$_pngBase64',
+    };
 
-    final avatar = tester.widget<Image>(
-      find.descendant(of: find.byType(ClipOval), matching: find.byType(Image)).first,
-    );
-    expect(avatar.image, isA<MemoryImage>());
-    expect((avatar.image as MemoryImage).bytes, base64Decode(_pngBase64));
-    expect(find.text('Trần Hoàng Đạt'), findsOneWidget);
+    final profile = await EmployeeRepository(api: mock).getEmployee('e-admin');
+
+    expect(mock.requests.single.method, 'GET');
+    expect(mock.requests.single.path, '/api/employees/e-admin');
+    final provider = parseImageProvider(profile?['avatar']?.toString());
+    expect(provider, isA<MemoryImage>());
+    expect((provider as MemoryImage).bytes, base64Decode(_pngBase64));
   });
 
-  testWidgets('Hồ sơ chưa có ảnh thì hiện icon vai trò', (tester) async {
+  testWidgets('Hồ sơ chưa có ảnh thì header hiện icon vai trò', (tester) async {
     await _pumpHome(tester, _user());
 
     expect(find.byType(Image), findsNothing);
     expect(find.byIcon(Icons.admin_panel_settings_outlined), findsWidgets);
+    expect(find.text('Trần Hoàng Đạt'), findsOneWidget);
   });
 
   testWidgets('Đổi avatar trong UserScope thì header cập nhật theo', (tester) async {

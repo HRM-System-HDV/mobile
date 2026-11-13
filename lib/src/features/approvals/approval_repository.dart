@@ -27,7 +27,11 @@ class ApprovalRepository {
         {if (note != null) 'reviewNote': note},
       );
 
-  /// Đồng nghiệp được nhờ làm thay / đổi ca phản hồi (khác với quản lý duyệt).
-  Future<void> respond(String id, {required bool accept}) =>
-      api.putJson('/api/requests/$id/respond', {'accept': accept});
+  /// Đồng nghiệp được nhờ làm thay / đổi ca phản hồi. integration-service chỉ mở
+  /// hai route này cho đúng người nhận đơn khi shiftSwapMode là mutual_acceptance;
+  /// `reviewRequest(peer: true)` chỉ đọc `reviewNote` trong body.
+  Future<void> respond(String id, {required bool accept, String? note}) => api.putJson(
+        '/api/requests/$id/${accept ? 'accept' : 'decline'}',
+        {if (note != null) 'reviewNote': note},
+      );
 }
