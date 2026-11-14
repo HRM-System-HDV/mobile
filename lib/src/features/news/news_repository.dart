@@ -49,6 +49,14 @@ class NewsRepository {
     );
   }
 
+  Future<NewsArticle> getNewsById(String id) async {
+    final data = await api.getJson('/api/news/${Uri.encodeComponent(id)}');
+    if (data is! Map<String, dynamic> || data['id'] != id) {
+      throw const ApiException('INVALID_RESPONSE', 'Dữ liệu chi tiết không hợp lệ', 502);
+    }
+    return _parse(data);
+  }
+
   Future<List<NewsArticle>> getNews() async {
     final data = await api.getJson('/api/news');
     final List list = data is List ? data : [];

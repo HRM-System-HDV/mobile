@@ -5,7 +5,6 @@ import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
 import '../leave_request/leave_repository.dart';
-import '../profile/employee_repository.dart';
 import 'shift_repository.dart';
 import 'schedule.dart';
 
@@ -38,6 +37,8 @@ class ShiftActionFormScreen extends StatefulWidget {
   final String date;
   final String dayOfWeek;
   final ShiftActionType actionType;
+  final LeaveRepository? leaveRepository;
+  final ShiftRepository? shiftRepository;
 
   const ShiftActionFormScreen({
     super.key,
@@ -45,6 +46,8 @@ class ShiftActionFormScreen extends StatefulWidget {
     required this.date,
     required this.dayOfWeek,
     required this.actionType,
+    this.leaveRepository,
+    this.shiftRepository,
   });
 
   @override
@@ -84,14 +87,20 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
 
   Future<void> _loadRefs() async {
     try {
+      if (widget.actionType == ShiftActionType.leave) {
+        setState(() => _loadingRefs = false);
+        return;
+      }
       final results = await Future.wait([
-        EmployeeRepository().getEmployees(),
-        ShiftRepository().getShifts(),
-        ShiftRepository().getTemplates(),
+        (widget.leaveRepository ?? LeaveRepository()).getShiftOptions(widget.shift.id),
+        (widget.shiftRepository ?? ShiftRepository()).getTemplates(),
       ]);
-      final emps = results[0] as List<Map<String, dynamic>>;
-      final shifts = results[1] as List<ApiShiftModel>;
-      final templates = results[2] as List<Map<String, dynamic>>;
+      final options = results[0] as Map<String, dynamic>;
+      final emps = (options['employees'] as List).cast<Map<String, dynamic>>();
+      final shifts = (options['shifts'] as List)
+          .map((s) => ApiShiftModel.fromJson(Map<String, dynamic>.from(s as Map)))
+          .toList();
+      final templates = results[1] as List<Map<String, dynamic>>;
       if (!mounted) return;
       final nameById = <String, String>{};
       final roleById = <String, String>{};
@@ -276,6 +285,12 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
       return;
     }
 
+    if (me.employeeId == null || me.employeeId!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tài khoản chưa gắn hồ sơ nhân sự')),
+      );
+      return;
+    }
     final reason = _reasonController.text.trim();
     final shiftLabel = '${widget.shift.shiftName} (${widget.shift.timeRange}) '
         'ngày ${toVnDate(widget.date)} tại ${widget.shift.branch}';
@@ -285,21 +300,6 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
     String content = '';
     String? targetShiftId;
     String? targetEmployeeId;
-    Map<String, dynamic>? notification;
-
-    Map<String, dynamic> baseNotification(String type) => {
-          'requestType': type,
-          'shiftName': widget.shift.shiftName,
-          'shiftDate': toVnDate(widget.date),
-          'shiftTime': widget.shift.timeRange,
-          'shiftHours': widget.shift.hours?.toString() ?? '',
-          'branch': widget.shift.branch,
-          'shiftRole': widget.shift.role,
-          'reason': reason,
-          'senderName': me.name,
-          'senderRole': me.role,
-        };
-
     switch (widget.actionType) {
       case ShiftActionType.cover:
         final colleague = _colleagues.where((c) => c.id == _selectedColleague).toList();
@@ -316,9 +316,6 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
         title = 'Nhờ làm thay: ${widget.shift.shiftName}';
         successMsg = '✅ Đã gửi lời nhờ làm thay tới ${person.displayName}!';
         targetEmployeeId = person.id;
-        final coverNotif = baseNotification('cover');
-        coverNotif.remove('reason');
-        notification = coverNotif;
         content = 'Nhờ ${person.displayName} (mã ${person.id}'
             '${person.phone.isEmpty ? '' : ', SĐT ${person.phone}'}) làm thay ca: $shiftLabel.';
         break;
@@ -336,13 +333,6 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
         targetShiftId = staff.shiftId;
         targetEmployeeId = staff.id;
         final swapDateLabel = vnDate(_swapDate!);
-        notification = {
-          ...baseNotification('swap'),
-          'swapShiftName': _selectedTargetShift ?? '',
-          'swapShiftDate': swapDateLabel,
-          'swapShiftBranch': widget.shift.branch,
-          'swapShiftRole': staff.role,
-        };
         content = 'Xin đổi ca với ${staff.displayName} (mã ${staff.id}).\n'
             'Ca của tôi: $shiftLabel.\n'
             'Ca muốn nhận: $_selectedTargetShift ngày $swapDateLabel.\n'
@@ -359,17 +349,20 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
 
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await LeaveRepository().createRequest({
+      await (widget.leaveRepository ?? LeaveRepository()).createRequest({
         'type': reqType,
         'title': title,
         'content': content,
-        'employeeId': me.id,
+        'employeeId': me.employeeId,
         // Gửi id chi nhánh lên API, tên chỉ dùng hiển thị.
         if (widget.shift.branchId.isNotEmpty) 'branchId': widget.shift.branchId,
-        if (widget.shift.id.isNotEmpty) 'sourceShiftId': widget.shift.id,
+        if (reqType == 'shift_swap') 'sourceShiftId': widget.shift.id,
+        if (reqType == 'leave') ...{
+          'leaveStartDate': toIsoDate(widget.date),
+          'leaveEndDate': toIsoDate(widget.date),
+        },
         if (targetShiftId != null) 'targetShiftId': targetShiftId,
         if (targetEmployeeId != null) 'targetEmployeeId': targetEmployeeId,
-        if (notification != null) 'notification': notification,
       });
       if (!mounted) return;
       Navigator.pop(context, true);

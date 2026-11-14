@@ -15,6 +15,7 @@ enum ShiftRequestStatus { pending, approved, rejected }
 
 class ShiftRequest {
   final String id;
+  final String? branchId;
   final String staffName;
   final String staffRole;
   final String staffAvatar;
@@ -29,6 +30,7 @@ class ShiftRequest {
 
   ShiftRequest({
     required this.id,
+    this.branchId,
     required this.staffName,
     required this.staffRole,
     required this.staffAvatar,
@@ -51,7 +53,9 @@ class ShiftRequest {
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 class ShiftRequestScreen extends StatefulWidget {
-  const ShiftRequestScreen({super.key});
+  final ApprovalRepository? repository;
+  final EmployeeRepository? employeeRepository;
+  const ShiftRequestScreen({super.key, this.repository, this.employeeRepository});
 
   @override
   State<ShiftRequestScreen> createState() => _ShiftRequestScreenState();
@@ -59,7 +63,7 @@ class ShiftRequestScreen extends StatefulWidget {
 
 class _ShiftRequestScreenState extends State<ShiftRequestScreen>
     with SingleTickerProviderStateMixin {
-  final ApprovalRepository _approvalRepo = ApprovalRepository();
+  late final ApprovalRepository _approvalRepo = widget.repository ?? ApprovalRepository();
   late TabController _tabController;
   List<ShiftRequest> _requests = [];
   String? _loadError;
@@ -76,13 +80,13 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
       // Danh bạ lỗi không được làm mất danh sách đơn; tên sẽ hiện mã nhân sự.
       List<Map<String, dynamic>> employees;
       try {
-        employees = await EmployeeRepository().getEmployees();
+        employees = await (widget.employeeRepository ?? EmployeeRepository()).getEmployees();
       } catch (_) {
         employees = const [];
       }
       final empMap = {for (final e in employees) e['id']?.toString() ?? '': e};
 
-      final list = await _approvalRepo.getPending();
+      final list = await _approvalRepo.getRequests();
       if (mounted) {
         final apiRequests = list.map((m) {
           ShiftRequestType t = ShiftRequestType.leave;
@@ -100,6 +104,7 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
 
           return ShiftRequest(
             id: m.id,
+            branchId: m.branchId,
             staffName: name,
             staffRole: role,
             staffAvatar: avatar.isNotEmpty ? avatar : 'N',
@@ -108,7 +113,9 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
             reason: m.content,
             submittedAt: m.createdAt ?? '—',
             shiftSwapMode: m.shiftSwapMode,
-            status: ShiftRequestStatus.pending,
+            status: m.status == 'approved'
+                ? ShiftRequestStatus.approved
+                : m.status == 'rejected' ? ShiftRequestStatus.rejected : ShiftRequestStatus.pending,
           );
         }).toList();
 
@@ -299,6 +306,44 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
     );
   }
 
+  bool _canDelete(ShiftRequest request) {
+    final user = UserScope.currentUser(context);
+    return request.status == ShiftRequestStatus.pending &&
+        (user?.role == 'admin' || (user?.role == 'manager' && user?.assignedBranchId != null && user?.assignedBranchId == request.branchId));
+  }
+
+  Future<void> _deleteRequest(ShiftRequest request, BuildContext sheetContext) async {
+    if (!_canDelete(request)) return;
+    var deleting = false;
+    String? error;
+    final deleted = await showDialog<bool>(context: context, barrierDismissible: false, builder: (dialogContext) => StatefulBuilder(builder: (context, update) => PopScope(
+      canPop: !deleting,
+      child: AlertDialog(
+        title: const Text('Xác nhận xóa đơn'),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Xóa đơn đang chờ của ${request.staffName}? Thao tác này không thể hoàn tác.'),
+          if (error != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(error!, style: const TextStyle(color: AppColors.error))),
+        ]),
+        actions: [
+          TextButton(onPressed: deleting ? null : () => Navigator.pop(dialogContext, false), child: const Text('Hủy')),
+          FilledButton(onPressed: deleting ? null : () async {
+            update(() { deleting = true; error = null; });
+            try {
+              await _approvalRepo.deleteRequest(request.id);
+              if (dialogContext.mounted) Navigator.pop(dialogContext, true);
+            } catch (exception) {
+              if (dialogContext.mounted) update(() { deleting = false; error = exception is ApiException ? exception.message : 'Không xóa được đơn yêu cầu'; });
+            }
+          }, child: Text(deleting ? 'Đang xóa...' : 'Xác nhận xóa')),
+        ],
+      ),
+    )));
+    if (deleted != true || !mounted) return;
+    setState(() => _requests.removeWhere((row) => row.id == request.id));
+    if (sheetContext.mounted) Navigator.pop(sheetContext);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xóa đơn yêu cầu')));
+  }
+
   void _showRequestDetail(ShiftRequest request) {
     showModalBottomSheet(
       context: context,
@@ -470,6 +515,15 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
                 ),
               ),
               const SizedBox(height: 20),
+              if (_canDelete(request)) ...[
+                OutlinedButton.icon(
+                  onPressed: () => _deleteRequest(request, ctx),
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Xóa đơn'),
+                  style: OutlinedButton.styleFrom(foregroundColor: AppColors.error),
+                ),
+                const SizedBox(height: 12),
+              ],
               // 2 nút xác nhận: Từ chối & Phê duyệt
               if (isPending && canActOnThis) ...[
                 Row(

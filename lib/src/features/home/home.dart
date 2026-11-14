@@ -10,21 +10,25 @@ import '../../core/models/user.dart';
 import '../../core/network/api_client.dart';
 import '../../core/services/notification_service.dart';
 import '../../core/utils/image_helper.dart';
+import '../../core/utils/date_format.dart';
 import '../schedule/schedule.dart';
 import '../tasks/task_service.dart';
 import '../tasks/task_repository.dart';
 import '../attendance/attendance_repository.dart';
+import '../attendance/double_attendance_button.dart';
 import '../schedule/shift_repository.dart';
 import '../wifi_config/wifi_config_repository.dart';
 import '../profile/employee_repository.dart';
 
 class HomeScreen extends StatefulWidget {
   final UserModel currentUser;
+  final ShiftRepository? shiftRepository;
   final Function(int tabIndex)? onNavigateToTab;
 
   const HomeScreen({
     super.key,
     required this.currentUser,
+    this.shiftRepository,
     this.onNavigateToTab,
   });
 
@@ -129,12 +133,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _fetchTodayShifts({String? employeeId}) async {
     try {
-      final shifts = await ShiftRepository().getShifts(
+      final shifts = await (widget.shiftRepository ?? ShiftRepository()).getShifts(
         employeeId: employeeId ?? currentUser.employeeId,
       );
       final templateNames = <String, String>{};
       try {
-        for (final t in await ShiftRepository().getTemplates()) {
+        for (final t in await (widget.shiftRepository ?? ShiftRepository()).getTemplates()) {
           final id = t['id']?.toString() ?? '';
           final name = t['name']?.toString() ?? '';
           if (id.isNotEmpty && name.isNotEmpty) templateNames[id] = name;
@@ -146,6 +150,22 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _todayShifts = shifts;
           _templateNames = templateNames;
+          final active = shifts.where((s) => s.employeeId == currentUser.employeeId &&
+              s.checkIn != null && s.checkOut == null && s.canCheckout).firstOrNull;
+          _checkedInShift = active == null ? null : ShiftDetail(
+            id: active.id,
+            shiftName: templateNames[active.templateId] ?? active.templateId,
+            startTime: active.scheduledStart,
+            endTime: active.scheduledEnd,
+            hours: null,
+            branch: BranchScope.label(context),
+            branchId: active.branchId ?? '',
+            role: '',
+            status: 'active',
+            attendanceState: active.attendanceState,
+            canCheckout: active.canCheckout,
+          );
+          _checkedInTime = parseVnDate(active?.checkIn);
           _shiftsError = null;
         });
         ShiftReminders.reschedule(
@@ -503,7 +523,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final IconData mainIcon = isCheckedIn ? Icons.timer_outlined : Icons.touch_app_rounded;
 
-    return Container(
+    final attendanceControl = Container(
       width: double.infinity,
       height: 104,
       decoration: BoxDecoration(
@@ -593,6 +613,17 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+    return Column(children: [
+      attendanceControl,
+      if (_checkedInShift != null && _employeeId.isNotEmpty)
+        DoubleAttendanceButton(
+          key: ValueKey('$_employeeId:${_checkedInShift!.id}'),
+          employeeId: _employeeId,
+          currentShiftId: _checkedInShift!.id,
+          shiftRepository: widget.shiftRepository,
+          onChanged: _fetchTodayShifts,
+        ),
+    ]);
   }
 
   Color _getShiftStatusColor(String status) => ScheduleService.getStatusColor(status);
@@ -782,20 +813,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       ? () async {
                           final targetShift = selectedShift!;
                           final now = DateTime.now();
-                          String? hardwareBssid = _hardwareBssid;
                           try {
-                            hardwareBssid ??= await _networkInfo.getWifiBSSID();
-                          } catch (_) {}
-                          final effectiveBssid = (hardwareBssid != null && hardwareBssid.isNotEmpty)
-                              ? hardwareBssid
-                              : (_wifiConfigs.isNotEmpty && _wifiConfigs.first.bssid.isNotEmpty ? _wifiConfigs.first.bssid : null);
-
-                          try {
-                            await AttendanceRepository().checkIn(
+                            await AttendanceRepository().checkInWithDeviceWifi(
                               employeeId: _employeeId,
                               shiftId: targetShift.id,
-                              wifiSsid: wifiSsid,
-                              wifiBssid: effectiveBssid,
                             );
                             if (!context.mounted) return;
                             Navigator.pop(context);
@@ -803,8 +824,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               _checkedInShift = targetShift;
                               _checkedInTime = now;
                             });
-                            // Đã vào ca: hủy các nhắc check-in, giữ nhắc ra ca.
-                            ShiftReminders.reschedule(employeeId: currentUser.employeeId);
+                            await _fetchTodayShifts();
+                            if (!context.mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 backgroundColor: AppColors.success,
@@ -1060,7 +1081,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ElevatedButton(
                 onPressed: () async {
                   try {
-                    await AttendanceRepository().checkOut(
+                    await AttendanceRepository().checkOutWithDeviceWifi(
                       employeeId: _employeeId,
                       shiftId: shift.id,
                     );
@@ -1070,8 +1091,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       _checkedInShift = null;
                       _checkedInTime = null;
                     });
-                    // Đã ra ca: hủy các nhắc quên check-out.
-                    ShiftReminders.reschedule(employeeId: currentUser.employeeId);
+                    await _fetchTodayShifts();
+                    if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         backgroundColor: AppColors.success,

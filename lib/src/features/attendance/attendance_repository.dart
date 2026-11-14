@@ -1,5 +1,6 @@
 import '../../core/models/attendance.dart';
 import '../../core/network/api_client.dart';
+import '../../core/services/attendance_wifi.dart';
 
 /// Repository chấm công gọi qua api-gateway (4000) về work-service (4003).
 ///
@@ -8,7 +9,53 @@ import '../../core/network/api_client.dart';
 /// "Thuộc tính không hỗ trợ". Giờ vào/ra do server tính, client không gửi.
 class AttendanceRepository {
   final ApiClient api;
-  AttendanceRepository({ApiClient? api}) : api = api ?? ApiClient();
+  final AttendanceWifi wifi;
+  AttendanceRepository({ApiClient? api, AttendanceWifi? wifi})
+      : api = api ?? ApiClient(),
+        wifi = wifi ?? AttendanceWifi();
+
+  Future<AttendanceModel> checkInWithDeviceWifi(
+      {required String employeeId, required String shiftId}) async {
+    final network = await wifi.read();
+    return checkIn(
+        employeeId: employeeId,
+        shiftId: shiftId,
+        wifiSsid: network['ssid'],
+        wifiBssid: network['bssid']);
+  }
+
+  Future<AttendanceModel> checkOutWithDeviceWifi(
+      {required String employeeId, required String shiftId}) async {
+    final network = await wifi.read();
+    return checkOut(
+        employeeId: employeeId,
+        shiftId: shiftId,
+        wifiSsid: network['ssid'],
+        wifiBssid: network['bssid']);
+  }
+
+  Future<void> doubleAttendanceWithDeviceWifi({required String employeeId, required String shiftId, required String nextShiftId}) async {
+    final network = await wifi.read();
+    await api.postJson('/api/attendance/double', {
+      'employeeId': employeeId,
+      'shiftId': shiftId,
+      'nextShiftId': nextShiftId,
+      'wifi': network,
+    });
+  }
+
+  Future<AttendanceModel> saveAttendance(
+      {required String shiftId,
+      required DateTime checkIn,
+      required DateTime checkOut,
+      String? note}) async {
+    final data = await api.putJson('/api/attendance/$shiftId', {
+      'checkIn': checkIn.toUtc().toIso8601String(),
+      'checkOut': checkOut.toUtc().toIso8601String(),
+      if (note != null) 'penaltyNote': note,
+    });
+    return AttendanceModel.fromJson(_asMap(data));
+  }
 
   /// Wi-Fi là MỘT object `{ssid, bssid}`, không phải hai khóa rời.
   static Map<String, dynamic> _wifi({String? ssid, String? bssid}) => {
@@ -61,7 +108,9 @@ class AttendanceRepository {
     String? branchId,
   }) async {
     final query = <String, String>{};
-    if (employeeId != null && employeeId.isNotEmpty) query['employeeId'] = employeeId;
+    if (employeeId != null && employeeId.isNotEmpty) {
+      query['employeeId'] = employeeId;
+    }
     if (workDate != null && workDate.isNotEmpty) query['workDate'] = workDate;
     if (month != null && month.isNotEmpty) query['month'] = month;
     if (branchId != null && branchId.isNotEmpty) query['branchId'] = branchId;

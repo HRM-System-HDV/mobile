@@ -20,6 +20,7 @@ Thuộc hệ sinh thái **HRM Enterprise**, kết nối trực tiếp với Core
 ### 1. Dành cho Nhân viên (Staff):
 - 🔐 **Đăng nhập & Phiên an toàn:** Xác thực tài khoản với Identity Service qua API Gateway, lưu phiên làm việc an toàn.
 - 📍 **Chấm công Wi-Fi 1 chạm:** Tự động phát hiện và kiểm tra BSSID / IP mạng Wi-Fi của chi nhánh được phân công. Báo lỗi tức thì nếu chưa kết nối đúng mạng Wi-Fi hợp lệ của cơ sở.
+- **Chấm công kép:** Trang chủ giữ nút ra ca và thêm “Ra ca & vào ca tiếp” khi hai ca liền nhau của cùng nhân viên đủ điều kiện theo cấu hình. Thao tác đọc Wi-Fi hiện tại, gọi một lần `POST /api/attendance/double`, rồi tải lại lịch.
 - 📅 **Lịch làm việc cá nhân:** Xem lịch phân ca trực quan theo tuần, thông tin chi tiết từng ca (giờ bắt đầu/kết thúc, vai trò), đăng ký nhận ca trống.
 - 📝 **Tạo Đơn từ nhanh:** Nộp đơn xin nghỉ phép, xin đi muộn / về sớm, làm thêm giờ (OT), tạm ứng lương, giải trình vi phạm chấm công kèm hình ảnh minh chứng.
 - 💰 **Tra cứu Phiếu lương:** Xem chi tiết lương thực nhận hàng tháng, ngày công thực tế, phụ cấp, các khoản khấu trừ BHXH, thuế TNCN và tiền phạt vi phạm.
@@ -94,13 +95,28 @@ flutter run
 
 ### Cấu hình địa chỉ API Gateway
 
-Chỉnh sửa địa chỉ máy chủ trong file cấu hình mạng `lib/src/core/network/api_client.dart`:
+Địa chỉ mặc định được chọn trong `lib/src/core/config/company.dart`:
 
 - **Android Emulator (Máy ảo Android Studio):** `http://10.0.2.2:4000`
 - **iOS Simulator / macOS:** `http://localhost:4000`
 - **Thiết bị thật (Cùng mạng LAN Wi-Fi với máy tính):** `http://<IP_MÁY_TÍNH>:4000`
 
 ---
+
+### Chạy trên điện thoại thật
+
+```bash
+flutter run --dart-define=API_BASE_URL=http://<IP_MÁY_CHỦ_LAN>:4000
+```
+
+Máy chủ phải chạy gateway và các service liên quan. Mobile sử dụng thêm
+`GET /api/requests/shift-options?sourceShiftId=<UUID>` của integration-service
+để lấy người/ca cùng chi nhánh cho đổi ca, không đọc hồ sơ riêng của đồng nghiệp.
+
+Chấm công vào/ra cần Wi-Fi thực tế, quyền vị trí khi dùng ứng dụng và dịch vụ
+vị trí đang bật. iOS cần provisioning profile có capability **Access WiFi Information**
+(tệp `Runner.entitlements` đã khai báo). Simulator iOS không đọc được Wi-Fi thực tế.
+Ca quá hạn ra ca được quản lý bổ sung bằng API sửa công sau khi chọn giờ ra.
 
 ## 🔑 Tài khoản thử nghiệm
 

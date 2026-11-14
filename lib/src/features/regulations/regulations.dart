@@ -4,6 +4,7 @@ import '../../core/constants/colors.dart';
 import '../../core/models/user.dart';
 import '../../core/models/branch.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/detail_loader.dart';
 import '../../core/utils/date_format.dart';
 import '../profile/employee_repository.dart';
 import '../schedule/shift_repository.dart' show toIsoDate;
@@ -11,10 +12,14 @@ import 'regulation_repository.dart';
 
 class CompanyRegulationsScreen extends StatefulWidget {
   final UserModel currentUser;
+  final RegulationRepository? repository;
+  final EmployeeRepository? employeeRepository;
 
   const CompanyRegulationsScreen({
     super.key,
     required this.currentUser,
+    this.repository,
+    this.employeeRepository,
   });
 
   @override
@@ -22,8 +27,8 @@ class CompanyRegulationsScreen extends StatefulWidget {
 }
 
 class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
-  final RegulationRepository _repo = RegulationRepository();
-  final EmployeeRepository _empRepo = EmployeeRepository();
+  late final RegulationRepository _repo = widget.repository ?? RegulationRepository();
+  late final EmployeeRepository _empRepo = widget.employeeRepository ?? EmployeeRepository();
   List<RegulationModel> _apiRegulations = [];
   List<Branch> _branches = [];
   bool _isLoading = false;
@@ -105,7 +110,9 @@ class _CompanyRegulationsScreenState extends State<CompanyRegulationsScreen> {
     return branchById(scopeBranchId).name;
   }
 
-  void _showDetail(BuildContext context, RegulationModel regulation) {
+  Future<void> _showDetail(BuildContext context, RegulationModel selected) async {
+    final regulation = await loadApiDetail(context, () => _repo.getRegulation(selected.id));
+    if (!context.mounted || regulation == null) return;
     final tagColor = _colorForCategory(regulation.category);
     final categoryText = regulation.category.isNotEmpty ? regulation.category : 'Nội quy';
     final scopeLabel = _scopeLabel(regulation.scopeBranchId);

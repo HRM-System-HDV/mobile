@@ -45,6 +45,14 @@ class WifiConfigRepository {
   final ApiClient api;
   WifiConfigRepository({ApiClient? api}) : api = api ?? ApiClient();
 
+  Future<WifiConfigModel> getWifiConfig(String id) async {
+    final data = await api.getJson('/api/wifi-configs/${Uri.encodeComponent(id)}');
+    if (data is! Map<String, dynamic> || data['id'] != id) {
+      throw const ApiException('INVALID_RESPONSE', 'Dữ liệu chi tiết không hợp lệ', 502);
+    }
+    return WifiConfigModel.fromJson(data);
+  }
+
   Future<List<WifiConfigModel>> getWifiConfigs({String? branchId}) async {
     final data = await api.getJson('/api/wifi-configs', query: {
       if (branchId != null && branchId.isNotEmpty) 'branchId': branchId,

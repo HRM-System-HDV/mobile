@@ -8,6 +8,12 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>HRM Enterprise</string>
+	<key>NSAppTransportSecurity</key>
+	<dict><key>NSAllowsLocalNetworking</key><true/></dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Ứng dụng kết nối máy chủ nhân sự trong mạng nội bộ.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Ứng dụng cần quyền vị trí để xác minh mạng Wi-Fi khi chấm công.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Ứng dụng cần quyền truy cập máy ảnh để chụp ảnh minh chứng hoàn thành nhiệm vụ và cập nhật hồ sơ</string>
 	<key>NSPhotoLibraryUsageDescription</key>

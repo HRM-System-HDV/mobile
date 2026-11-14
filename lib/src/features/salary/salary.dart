@@ -46,6 +46,7 @@ class _SalaryScreenState extends State<SalaryScreen> {
   final SalaryRepository _salaryRepository = SalaryRepository();
   List<PayslipModel> _apiPayslips = const [];
   String? _lastEmployeeId;
+  int _loadVersion = 0;
 
   @override
   void initState() {
@@ -88,7 +89,7 @@ class _SalaryScreenState extends State<SalaryScreen> {
   PayslipModel? get _currentPayslip {
     final q = _monthQuery(_selectedMonth);
     for (final p in _apiPayslips) {
-      if (p.month == q) return p;
+      if (p.month == q || p.month == q.split('-').reversed.join('-')) return p;
     }
     // Không có phiếu đúng kỳ thì KHÔNG hiển thị phiếu của kỳ khác (trước đây
     // lấy payslips.first nên người dùng thấy số tiền của kỳ khác dưới nhãn
@@ -99,6 +100,8 @@ class _SalaryScreenState extends State<SalaryScreen> {
   Future<void> _loadPayslips() async {
     // Mọi tuyến nghiệp vụ (payslip/shift/attendance) lọc theo UUID nhân sự,
     // không dùng id tài khoản từ identity-service.
+    final version = ++_loadVersion;
+    setState(() => _apiPayslips = []);
     final employeeId = UserScope.currentUser(context)?.employeeId;
     final q = _monthQuery(_selectedMonth);
     Object? firstError;
@@ -107,10 +110,14 @@ class _SalaryScreenState extends State<SalaryScreen> {
         employeeId: employeeId,
         month: q.isNotEmpty ? q : null,
       );
-      if (mounted) setState(() => _apiPayslips = items);
+      final selected = items.where((item) => item.month == q || item.month == q.split('-').reversed.join('-')).firstOrNull;
+      final fresh = selected == null ? null : await _salaryRepository.getPayslip(selected.id);
+      if (mounted && version == _loadVersion) {
+        setState(() => _apiPayslips = fresh == null ? [] : [fresh]);
+      }
     } catch (e) {
       firstError ??= e;
-      if (mounted) setState(() => _apiPayslips = []);
+      if (mounted && version == _loadVersion) setState(() => _apiPayslips = []);
     }
 
     // Tải danh sách ca làm việc để tính số ca/giờ được phân công
@@ -142,7 +149,7 @@ class _SalaryScreenState extends State<SalaryScreen> {
           hoursUnknown = true;
         }
       }
-      if (mounted) {
+      if (mounted && version == _loadVersion) {
         setState(() {
           _assignedShiftCount = shiftCount;
           // Có ca không xác định được giờ thì không hiển thị tổng thiếu chính xác.
@@ -151,7 +158,7 @@ class _SalaryScreenState extends State<SalaryScreen> {
       }
     } catch (e) {
       firstError ??= e;
-      if (mounted) {
+      if (mounted && version == _loadVersion) {
         setState(() {
           _assignedShiftCount = 0;
           _assignedHours = 0.0;
@@ -207,7 +214,7 @@ class _SalaryScreenState extends State<SalaryScreen> {
           status: status,
         ));
       }
-      if (mounted) {
+      if (mounted && version == _loadVersion) {
         setState(() {
           _workLogs.clear();
           _workLogs.addAll(logs);
@@ -217,7 +224,7 @@ class _SalaryScreenState extends State<SalaryScreen> {
       }
     } catch (e) {
       firstError ??= e;
-      if (mounted) {
+      if (mounted && version == _loadVersion) {
         setState(() {
           _workLogs.clear();
           _workedShiftCount = 0;
@@ -226,7 +233,7 @@ class _SalaryScreenState extends State<SalaryScreen> {
       }
     }
 
-    if (firstError != null) {
+    if (firstError != null && version == _loadVersion) {
       _showError('Không tải đủ dữ liệu lương: '
           '${firstError is ApiException ? firstError.message : firstError}');
     }

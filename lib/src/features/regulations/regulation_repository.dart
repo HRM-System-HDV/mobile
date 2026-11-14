@@ -55,6 +55,14 @@ class RegulationRepository {
   final ApiClient api;
   RegulationRepository({ApiClient? api}) : api = api ?? ApiClient();
 
+  Future<RegulationModel> getRegulation(String id) async {
+    final data = await api.getJson('/api/regulations/${Uri.encodeComponent(id)}');
+    if (data is! Map<String, dynamic> || data['id'] != id) {
+      throw const ApiException('INVALID_RESPONSE', 'Dữ liệu chi tiết không hợp lệ', 502);
+    }
+    return RegulationModel.fromJson(data);
+  }
+
   Future<List<RegulationModel>> getRegulations() async {
     final data = await api.getJson('/api/regulations');
     final List list = data is List ? data : [];

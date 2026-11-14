@@ -4,6 +4,7 @@ import 'package:network_info_plus/network_info_plus.dart';
 import '../../core/constants/colors.dart';
 import '../../core/models/branch.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/detail_loader.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../profile/employee_repository.dart';
@@ -58,7 +59,8 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
 
     // Gọi API thật từ gateway/integration-service (4005)
     try {
-      final remoteList = await _repo.getWifiConfigs(branchId: branch.id);
+      final listed = await _repo.getWifiConfigs(branchId: branch.id);
+      final remoteList = await Future.wait(listed.map((item) => _repo.getWifiConfig(item.id)));
       if (mounted && _loadedBranchId == branch.id) {
         _disposeEntries();
         for (final item in remoteList) {
@@ -276,8 +278,10 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
                 else
                   for (final branch in branchList)
                     InkWell(
-                      onTap: () {
-                        BranchScope.select(context, branch);
+                      onTap: () async {
+                        final fresh = await loadApiDetail(sheetContext, () => EmployeeRepository().getBranch(branch.id));
+                        if (!sheetContext.mounted || !mounted || fresh == null) return;
+                        BranchScope.select(context, fresh);
                         Navigator.pop(sheetContext);
                       },
                       child: Padding(

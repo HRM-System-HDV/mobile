@@ -8,6 +8,14 @@ class SalaryRepository {
   final ApiClient api;
   SalaryRepository({ApiClient? api}) : api = api ?? ApiClient();
 
+  Future<PayslipModel> getPayslip(String id) async {
+    final data = await api.getJson('/api/payroll/payslips/${Uri.encodeComponent(id)}');
+    if (data is! Map<String, dynamic> || data['id'] != id) {
+      throw const ApiException('INVALID_RESPONSE', 'Dữ liệu chi tiết không hợp lệ', 502);
+    }
+    return PayslipModel.fromJson(data);
+  }
+
   Future<List<PayslipModel>> getPayslips({String? employeeId, String? month}) async {
     final data = await api.getJson('/api/payroll/payslips', query: {
       if (employeeId != null) 'employeeId': employeeId,
