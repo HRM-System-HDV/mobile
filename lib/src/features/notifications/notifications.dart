@@ -139,12 +139,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  /// Thông báo gửi đích danh chỉ hiện khi lọc theo đúng nhân sự đang đăng nhập.
-  String? get _employeeId {
-    final uid = UserScope.currentUser(context)?.id ?? '';
-    return uid.isEmpty ? null : uid;
-  }
-
   String? _rawString(Map<String, dynamic> raw, List<String> keys) {
     for (final k in keys) {
       final v = raw[k];
@@ -155,8 +149,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Future<void> _fetchNotifications() async {
     try {
-      final employeeId = _employeeId;
-      final list = await _repo.getNotifications(employeeId: employeeId);
+      final list = await _repo.getNotifications();
       if (mounted) {
         final remoteItems = list.map((m) {
           final metaMap = m.metadata ?? const <String, dynamic>{};
@@ -181,9 +174,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             }
           }
 
-          // id đơn từ thật nằm trong metadata; thiếu nó thì không mở màn phản hồi.
+          // BE để id đơn ở CỘT `Notification.requestId` (con trỏ điều hướng có kiểu),
+          // metadata chỉ còn là đường cũ; đọc cột trước để bấm thông báo thật mở được đơn.
           final String? requestId =
-              _rawString(metaMap, ['requestId', 'request_id']);
+              m.requestId ?? _rawString(metaMap, ['requestId', 'request_id']);
           final String? statusRaw = _rawString(
             metaMap,
             ['requestStatus', 'request_status'],

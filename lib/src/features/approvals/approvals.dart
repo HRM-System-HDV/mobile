@@ -24,6 +24,7 @@ class ShiftRequest {
   final String? swapWithName;
   final String reason;
   final String submittedAt;
+  final String? shiftSwapMode;
   ShiftRequestStatus status;
 
   ShiftRequest({
@@ -37,8 +38,14 @@ class ShiftRequest {
     this.swapWithName,
     required this.reason,
     required this.submittedAt,
+    this.shiftSwapMode,
     this.status = ShiftRequestStatus.pending,
   });
+
+  /// Đơn đổi ca ở chế độ tự chấp nhận: BE chặn manager duyệt (chỉ admin ghi hộ
+  /// được), người được nhờ mới có quyền accept/decline.
+  bool get peerMustRespond =>
+      type == ShiftRequestType.swap && shiftSwapMode == 'mutual_acceptance';
 }
 
 // ─── Screen ──────────────────────────────────────────────────────────────────
@@ -100,6 +107,7 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
             currentShift: m.title,
             reason: m.content,
             submittedAt: m.createdAt ?? '—',
+            shiftSwapMode: m.shiftSwapMode,
             status: ShiftRequestStatus.pending,
           );
         }).toList();
@@ -152,7 +160,9 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
     if (!mounted) return;
     setState(() => request.status = ShiftRequestStatus.approved);
     final text = request.type == ShiftRequestType.swap
-        ? '✅ Quản lý đã duyệt đồng ý hộ đổi ca cho ${request.staffName}'
+        // Duyệt đổi ca là lệnh đổi lịch phân ca thật (integration-service gọi
+        // /api/shifts/swap trước khi ghi approved), không chỉ chốt mẫu đơn.
+        ? '✅ Đã duyệt đổi ca và cập nhật lịch phân ca của ${request.staffName}'
         : '✅ Đã duyệt yêu cầu của ${request.staffName}';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -328,6 +338,9 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
         }
 
         final isPending = request.status == ShiftRequestStatus.pending;
+        // BE chặn manager duyệt đơn đổi ca tự chấp nhận (403 "Đơn này do nhân viên
+        // đích phản hồi") — ẩn 2 nút, chỉ admin còn quyền ghi hộ.
+        final canActOnThis = !request.peerMustRespond || UserScope.isAdmin(context);
 
         return Container(
           padding: EdgeInsets.only(
@@ -458,7 +471,7 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
               ),
               const SizedBox(height: 20),
               // 2 nút xác nhận: Từ chối & Phê duyệt
-              if (isPending) ...[
+              if (isPending && canActOnThis) ...[
                 Row(
                   children: [
                     Expanded(
@@ -494,6 +507,36 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
                           padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
                       ),
+                    ),
+                  ],
+                ),
+              ] else if (isPending) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: const Text(
+                    'Đơn đổi ca này do nhân viên được nhờ tự phản hồi.',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    const Spacer(),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                      ),
+                      child: const Text('Đóng'),
                     ),
                   ],
                 ),

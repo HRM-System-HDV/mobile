@@ -148,7 +148,7 @@ class AppRouter {
               staff: m['staff'] as StaffInShift,
               shift: m['shift'] as GeneralShiftModel,
               day: m['day'] as GeneralDayModel,
-              gracePeriodMinutes: m['gracePeriodMinutes'] as int? ?? 5,
+              gracePeriodMinutes: m['gracePeriodMinutes'] as int? ?? 0,
               checkoutWindowMinutes: m['checkoutWindowMinutes'] as int? ?? 60,
             );
           }

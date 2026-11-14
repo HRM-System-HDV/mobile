@@ -32,6 +32,8 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
   final StaffInShift staff;
   final GeneralShiftModel shift;
   final GeneralDayModel day;
+  /// Ngưỡng cho phép vào ca muộn (phút) đọc từ `GET /api/attendance/config`;
+  /// backend mặc định 0 (không có thời gian trễ).
   final int gracePeriodMinutes;
 
   /// Cấu hình "Thời gian cho phép chốt ra" (phút) đọc từ
@@ -47,7 +49,7 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
     required this.staff,
     required this.shift,
     required this.day,
-    this.gracePeriodMinutes = 5,
+    this.gracePeriodMinutes = 0,
     this.checkoutWindowMinutes = 60,
     this.attendance,
   });

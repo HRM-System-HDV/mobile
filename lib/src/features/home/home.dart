@@ -1038,13 +1038,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text('Khấu trừ phạt ca:', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                                  // Chưa có dữ liệu phạt từ API tại thời điểm ra ca.
+                                  // Phạt chỉ tính lúc chốt ra (cần checkOut) nên màn xác nhận chưa có số tiền.
                                   Text('—', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
                                 ],
                               ),
                               const SizedBox(height: 4),
                               const Text(
-                                '💡 Nhân viên hưởng lương cơ bản tháng. Ca làm việc không cộng/trừ giờ, chỉ hiển thị số tiền trừ khi có vi phạm phạt.',
+                                '💡 Lương cố định tháng: mỗi ca hoàn thành tính 1 công = lương tháng chia số công chuẩn. Vào muộn hoặc ra sớm bị trừ theo phần trăm cấu hình chi nhánh, chỉ có số tiền sau khi chốt ra.',
                                 style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontStyle: FontStyle.italic),
                               ),
                             ],

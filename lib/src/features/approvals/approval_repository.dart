@@ -17,6 +17,13 @@ class ApprovalRepository {
         .toList();
   }
 
+  /// Đọc một đơn theo id để lấy `shiftSwapMode` của chính đơn đó. BE mở
+  /// GET /api/requests/:id cho người gửi và người nhận (requestRead).
+  Future<LeaveRequestModel> get(String id) async {
+    final data = await api.getJson('/api/requests/$id');
+    return LeaveRequestModel.fromJson((data as Map).cast<String, dynamic>());
+  }
+
   Future<void> approve(String id, {String? note}) => api.putJson(
         '/api/requests/$id/approve',
         {if (note != null) 'reviewNote': note},

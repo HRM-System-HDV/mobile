@@ -99,7 +99,9 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
   List<ApiShiftModel> _apiShifts = [];
   List<Map<String, dynamic>> _apiEmployees = [];
   List<Map<String, dynamic>> _apiTemplates = [];
-  int _gracePeriodMinutes = 5;
+  // Ngưỡng cho phép vào ca muộn (phút); backend mặc định 0, giá trị thật lấy
+  // từ GET /api/attendance/config theo chi nhánh.
+  int _gracePeriodMinutes = 0;
   // Thời gian cho phép chốt ra sau khi hết ca (phút); 60 là mặc định của
   // backend, 0 = tính năng tắt. Màn này chỉ đọc cấu hình để dùng, việc lưu
   // thuộc về màn "Cấu hình chấm công" (PUT /api/attendance/config).

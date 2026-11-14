@@ -12,6 +12,11 @@ class LeaveRequestModel {
   final String? leaveStartDate;
   final String? leaveEndDate;
   final String status;
+  /// Bản chụp chế độ duyệt lúc tạo đơn (chỉ có với shift_swap):
+  /// `mutual_acceptance` = người được nhờ phản hồi qua accept/decline,
+  /// `manager_approval` = quản lý duyệt qua approve/reject. QUYẾT ĐỊNH NÚT BẤM
+  /// THEO GIÁ TRỊ NÀY, không suy từ cấu hình chấm công toàn cục.
+  final String? shiftSwapMode;
   final String? reviewedBy;
   final String? reviewNote;
   final String? createdAt;
@@ -28,6 +33,7 @@ class LeaveRequestModel {
     this.leaveStartDate,
     this.leaveEndDate,
     required this.status,
+    this.shiftSwapMode,
     this.reviewedBy,
     this.reviewNote,
     this.createdAt,
@@ -45,6 +51,7 @@ class LeaveRequestModel {
         leaveStartDate: j['leaveStartDate']?.toString(),
         leaveEndDate: j['leaveEndDate']?.toString(),
         status: j['status']?.toString() ?? 'pending',
+        shiftSwapMode: j['shiftSwapMode']?.toString(),
         reviewedBy: j['reviewedBy']?.toString(),
         reviewNote: j['reviewNote']?.toString(),
         createdAt: j['createdAt']?.toString(),
