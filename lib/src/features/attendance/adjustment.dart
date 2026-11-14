@@ -30,7 +30,9 @@ class AdjustmentItem {
 }
 
 class AttendanceAdjustmentScreen extends StatefulWidget {
-  const AttendanceAdjustmentScreen({super.key});
+  final LeaveRepository? leaveRepository;
+  final ShiftRepository? shiftRepository;
+  const AttendanceAdjustmentScreen({super.key, this.leaveRepository, this.shiftRepository});
 
   @override
   State<AttendanceAdjustmentScreen> createState() => _AttendanceAdjustmentScreenState();
@@ -39,14 +41,14 @@ class AttendanceAdjustmentScreen extends StatefulWidget {
 class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen> {
   bool _isLoading = false;
   final List<AdjustmentItem> _items = [];
-  List<Map<String, dynamic>> _templates = [];
+  List<ApiShiftModel> _shifts = [];
   String? _loadError;
   String? _lastUserId;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final uid = UserScope.currentUser(context)?.id;
+    final uid = UserScope.currentUser(context)?.employeeId;
     if (_lastUserId != uid) {
       _lastUserId = uid;
       _loadData();
@@ -55,26 +57,29 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
-    final uid = UserScope.currentUser(context)?.id;
+    final uid = UserScope.currentUser(context)?.employeeId;
 
-    // Ca mẫu do quản lý tạo; danh sách yêu cầu vẫn tải được dù bước này lỗi.
-    List<Map<String, dynamic>> templates = _templates;
-    String? templateError;
+    // Chọn dòng ca được phân công để gửi sourceShiftId chính xác.
+    List<ApiShiftModel> shifts = _shifts;
+    String? shiftError;
     try {
-      templates = await ShiftRepository().getTemplates();
+      if (uid == null || uid.isEmpty) {
+        throw const ApiException('NO_EMPLOYEE', 'Tài khoản chưa gắn hồ sơ nhân sự', 400);
+      }
+      shifts = await (widget.shiftRepository ?? ShiftRepository()).getShifts(employeeId: uid);
     } catch (e) {
-      templateError = e is ApiException ? e.message : 'Không tải được danh sách ca mẫu';
+      shiftError = e is ApiException ? e.message : 'Không tải được lịch làm việc';
     }
 
     try {
-      final requests = await LeaveRepository().getRequests(employeeId: uid);
+      final requests = await (widget.leaveRepository ?? LeaveRepository()).getRequests(employeeId: uid);
       final supps = requests.where((r) => r.type == 'work_supplement').toList();
       if (mounted) {
         setState(() {
-          _templates = templates;
+          _shifts = shifts;
           _items.clear();
           for (final r in supps) {
-            // Giờ vào/ra thật nằm trong content: 'Vào: HH:mm, Ra: HH:mm. Lý do: ...'
+            // Dữ liệu đề nghị có cấu trúc; chỉ đọc content cho đơn cũ.
             final inMatch = RegExp(r'Vào:\s*([^,.]+)').firstMatch(r.content);
             final outMatch = RegExp(r'Ra:\s*([^,.]+)').firstMatch(r.content);
             final reasonMatch = RegExp(r'Lý do:\s*(.*)', dotAll: true).firstMatch(r.content);
@@ -82,20 +87,20 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
               id: r.id,
               date: (r.createdAt ?? '').trim().isEmpty ? '—' : toVnDate(r.createdAt),
               shiftName: r.title,
-              checkIn: inMatch != null ? inMatch.group(1)!.trim() : '—',
-              checkOut: outMatch != null ? outMatch.group(1)!.trim() : '—',
+              checkIn: r.requestedCheckIn != null ? toVnDateTime(r.requestedCheckIn) : inMatch?.group(1)?.trim() ?? '—',
+              checkOut: r.requestedCheckOut != null ? toVnDateTime(r.requestedCheckOut) : outMatch?.group(1)?.trim() ?? '—',
               reason: reasonMatch != null ? reasonMatch.group(1)!.trim() : r.content,
               status: r.status,
               createdAt: r.createdAt ?? '',
             ));
           }
-          _loadError = templateError;
+          _loadError = shiftError;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _templates = templates;
+          _shifts = shifts;
           _loadError = e is ApiException ? e.message : 'Không tải được danh sách yêu cầu';
         });
       }
@@ -117,26 +122,14 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
 
 
   void _showCreateModal() {
-    // Tên và giờ ca phải lấy từ ca mẫu thật, không bịa sẵn.
-    final names = _templates
-        .map((t) => t['name']?.toString() ?? '')
-        .where((n) => n.isNotEmpty)
-        .toSet()
-        .toList();
-    if (names.isEmpty) {
-      _showError('Chưa có ca mẫu trên hệ thống. Quản lý cần tạo ca trước khi bổ sung công.');
+    final shifts = _shifts.where((s) => !s.isCancelled).toList();
+    if (shifts.isEmpty) {
+      _showError('Chưa có ca được phân công để bổ sung chấm công.');
       return;
     }
-    String selectedShift = names.first;
-    String labelFor(String name) {
-      final t = _templates.firstWhere(
-        (t) => (t['name']?.toString() ?? '') == name,
-        orElse: () => const <String, dynamic>{},
-      );
-      final start = t['startTime']?.toString() ?? '';
-      final end = t['endTime']?.toString() ?? '';
-      return start.isNotEmpty && end.isNotEmpty ? '$name ($start - $end)' : name;
-    }
+    String selectedShift = shifts.first.id;
+    String labelFor(ApiShiftModel shift) =>
+        '${toVnDate(shift.workDate)} (${shift.timeLabel})';
 
     final inController = TextEditingController();
     final outController = TextEditingController();
@@ -181,10 +174,10 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
               ),
-              items: names
-                  .map((name) => DropdownMenuItem(
-                        value: name,
-                        child: Text(labelFor(name), style: const TextStyle(fontSize: 14)),
+              items: shifts
+                  .map((shift) => DropdownMenuItem(
+                        value: shift.id,
+                        child: Text(labelFor(shift), style: const TextStyle(fontSize: 14)),
                       ))
                   .toList(),
               onChanged: (val) => selectedShift = val!,
@@ -251,23 +244,55 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                   _showError('Vui lòng nhập lý do giải trình');
                   return;
                 }
-                final hhmm = RegExp(r'^\d{1,2}:\d{2}$');
+                final hhmm = RegExp(r'^(?:[01]?\d|2[0-3]):[0-5]\d$');
                 if (!hhmm.hasMatch(inTime) || !hhmm.hasMatch(outTime)) {
                   _showError('Nhập giờ vào/ra đúng định dạng HH:mm');
                   return;
                 }
                 final user = UserScope.currentUser(context);
-                final empId = user?.id ?? '';
+                final empId = user?.employeeId ?? '';
                 if (empId.isEmpty) {
                   _showError('Không xác định được nhân sự đang đăng nhập');
                   return;
                 }
+                final shift = shifts.firstWhere((s) => s.id == selectedShift);
+                final workDate = parseVnDate(shift.workDate);
+                if (workDate == null) {
+                  _showError('Không xác định được ngày làm việc của ca');
+                  return;
+                }
+                DateTime instant(String hm) {
+                  final parts = hm.split(':').map(int.parse).toList();
+                  var result = DateTime(workDate.year, workDate.month, workDate.day, parts[0], parts[1]);
+                  final start = shift.scheduledStart.split(':').map(int.parse).toList();
+                  if (shift.scheduledEnd.compareTo(shift.scheduledStart) < 0 &&
+                      parts[0] * 60 + parts[1] < start[0] * 60 + start[1]) {
+                    result = result.add(const Duration(days: 1));
+                  }
+                  return result;
+                }
+                final checkIn = instant(inTime);
+                var checkOut = instant(outTime);
+                if (checkOut.isBefore(checkIn)) {
+                  if (shift.scheduledEnd.compareTo(shift.scheduledStart) >= 0) {
+                    _showError('Giờ ra phải sau giờ vào');
+                    return;
+                  }
+                  checkOut = checkOut.add(const Duration(days: 1));
+                }
+                if (checkIn.isAfter(DateTime.now()) || checkOut.isAfter(DateTime.now())) {
+                  _showError('Không thể đề nghị chấm công trong tương lai');
+                  return;
+                }
                 try {
-                  await LeaveRepository().createRequest({
+                  await (widget.leaveRepository ?? LeaveRepository()).createRequest({
                     'type': 'work_supplement',
-                    'title': 'Bổ sung chấm công: $selectedShift',
+                    'title': 'Bổ sung chấm công: ${labelFor(shift)}',
                     'content': 'Vào: $inTime, Ra: $outTime. Lý do: $reason',
                     'employeeId': empId,
+                    'sourceShiftId': shift.id,
+                    'requestedCheckIn': checkIn.toUtc().toIso8601String(),
+                    'requestedCheckOut': checkOut.toUtc().toIso8601String(),
                   });
                   if (modalCtx.mounted) {
                     Navigator.pop(modalCtx);

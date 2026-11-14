@@ -8,6 +8,14 @@ class EmployeeRepository {
 
   /// Lấy danh sách nhân viên từ /api/employees (có thể lọc theo chi nhánh).
   /// Organization chỉ nhận bộ lọc id: branchId, departmentId, positionId, status.
+  Future<Branch> getBranch(String id) async {
+    final data = await api.getJson('/api/branches/${Uri.encodeComponent(id)}');
+    if (data is! Map<String, dynamic> || data['id'] != id) {
+      throw const ApiException('INVALID_RESPONSE', 'Dữ liệu chi tiết không hợp lệ', 502);
+    }
+    return Branch.fromJson(data);
+  }
+
   Future<List<Map<String, dynamic>>> getEmployees({String? branchId}) async {
     final query = <String, String>{};
     if (branchId != null && branchId.isNotEmpty) {

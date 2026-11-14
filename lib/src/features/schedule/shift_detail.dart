@@ -13,12 +13,14 @@ class ShiftDetailScreen extends StatefulWidget {
   final ShiftDetail shift;
   final String date;
   final String dayOfWeek;
+  final AttendanceRepository? attendanceRepository;
 
   const ShiftDetailScreen({
     super.key,
     required this.shift,
     required this.date,
     required this.dayOfWeek,
+    this.attendanceRepository,
   });
 
   @override
@@ -44,9 +46,12 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
 
   Future<void> _loadAttendance() async {
     // Chỉ đọc chấm công của chính người đăng nhập để không hiện giờ công của đồng nghiệp.
-    final uid = UserScope.currentUser(context)?.id;
+    final uid = UserScope.currentUser(context)?.employeeId;
     try {
-      final records = await AttendanceRepository().getAttendance(employeeId: uid);
+      if (uid == null || uid.isEmpty) {
+        throw const ApiException('NO_EMPLOYEE', 'Tài khoản chưa gắn hồ sơ nhân sự', 400);
+      }
+      final records = await (widget.attendanceRepository ?? AttendanceRepository()).getAttendance(employeeId: uid);
       if (!mounted) return;
       final match = records.where((r) => r.shiftId == widget.shift.id || r.shiftId == widget.shift.shiftName).firstOrNull;
       setState(() {
@@ -82,20 +87,17 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
 
     // Chỉ dùng dữ liệu chấm công thật từ API.
     // Khi chưa có dữ liệu thật thì hiển thị '—' (chưa chấm công), không dùng giờ mẫu.
-    final String checkIn = _realCheckIn ?? '—';
-    final String checkOut = _realCheckOut ?? '—';
-    String tongGioTinhCong = '—';
-    if (_realCheckIn != null && _realCheckOut != null) {
-      final pIn = _realCheckIn!.split(':');
-      final pOut = _realCheckOut!.split(':');
-      if (pIn.length == 2 && pOut.length == 2) {
-        final mIn = (int.tryParse(pIn[0]) ?? 0) * 60 + (int.tryParse(pIn[1]) ?? 0);
-        final mOut = (int.tryParse(pOut[0]) ?? 0) * 60 + (int.tryParse(pOut[1]) ?? 0);
-        if (mOut > mIn) {
-          tongGioTinhCong = '${((mOut - mIn) / 60.0).toStringAsFixed(1)} giờ';
-        }
-      }
+    String timeLabel(String? raw) {
+      final d = parseVnDate(raw);
+      return d == null ? '—' : '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
     }
+    final checkIn = timeLabel(_realCheckIn);
+    final checkOut = timeLabel(_realCheckOut);
+    final start = parseVnDate(_realCheckIn);
+    final end = parseVnDate(_realCheckOut);
+    final tongGioTinhCong = start != null && end != null && !end.isBefore(start)
+        ? '${(end.difference(start).inMinutes / 60).toStringAsFixed(1)} giờ'
+        : '—';
     // API chấm công chưa trả trường nguồn công.
     const String nguonCong = '—';
 

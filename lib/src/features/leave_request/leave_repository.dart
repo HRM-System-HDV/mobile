@@ -17,6 +17,12 @@ class LeaveRepository {
         .toList();
   }
 
+  Future<Map<String, dynamic>> getShiftOptions(String sourceShiftId) async {
+    final data = await api.getJson('/api/requests/shift-options',
+        query: {'sourceShiftId': sourceShiftId});
+    return Map<String, dynamic>.from(data as Map);
+  }
+
   Future<LeaveRequestModel> createRequest(Map<String, dynamic> payload) async {
     final data = await api.postJson('/api/requests', payload);
     return LeaveRequestModel.fromJson((data as Map).cast<String, dynamic>());

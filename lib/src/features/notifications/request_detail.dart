@@ -74,12 +74,13 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
   /// `false` = đơn thuộc chế độ quản lý duyệt, nhân viên được nhờ KHÔNG phản hồi
   /// được (integration-service chặn 403). `null` = chưa đọc được đơn từ API.
   bool? _peerCanRespond;
+  String? _reason;
 
   @override
   void initState() {
     super.initState();
     _status = widget.initialStatus;
-    if (_status == ShiftRequestStatus.pending && widget.requestId.isNotEmpty) {
+    if (widget.requestId.isNotEmpty) {
       _loadShiftSwapMode();
     }
   }
@@ -90,10 +91,15 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
     try {
       final row = await ApprovalRepository().get(widget.requestId);
       if (!mounted) return;
-      setState(() => _peerCanRespond = row.shiftSwapMode == 'mutual_acceptance');
+      final me = UserScope.currentUser(context);
+      setState(() {
+        _peerCanRespond = row.shiftSwapMode == 'mutual_acceptance' && row.targetEmployeeId == me?.employeeId;
+        _status = row.status == 'approved' ? ShiftRequestStatus.accepted
+            : row.status == 'rejected' ? ShiftRequestStatus.rejected : ShiftRequestStatus.pending;
+        _reason = row.content;
+      });
     } catch (_) {
-      // Không đọc được đơn thì giữ nguyên quyền bấm; BE vẫn chặn và _handleResponse
-      // sẽ hiện đúng thông báo lỗi.
+      // Không đọc được đơn thì chưa cho phép phản hồi.
     }
   }
 
@@ -328,7 +334,7 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
             ],
 
             // ── Lý do / Lời nhắn (chỉ hiển thị khi không phải cover hoặc có lý do cụ thể) ──
-            if (!isCover && widget.reason.isNotEmpty) ...[
+            if ((_reason ?? widget.reason).isNotEmpty) ...[
               const SizedBox(height: 20),
               const Text(
                 'Lý do / Lời nhắn',
@@ -357,7 +363,7 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        widget.reason,
+                        _reason ?? widget.reason,
                         style: const TextStyle(fontSize: 13.5, height: 1.45, fontStyle: FontStyle.italic, color: AppColors.textPrimary),
                       ),
                     ),
@@ -416,7 +422,7 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
   Widget _buildBottomActionBar() {
     // BE chặn nhân viên đích accept/decline khi đơn ở chế độ manager_approval
     // (403 "Bạn không có quyền phản hồi đơn này") nên không vẽ 2 nút phản hồi.
-    final bool awaitingManager = _status == ShiftRequestStatus.pending && _peerCanRespond == false;
+    final bool awaitingManager = _status == ShiftRequestStatus.pending;
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       decoration: BoxDecoration(
@@ -431,7 +437,7 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
       ),
       child: SafeArea(
         top: false,
-        child: _status == ShiftRequestStatus.pending && !awaitingManager
+        child: _status == ShiftRequestStatus.pending && _peerCanRespond == true
             ? Row(
                 children: [
                   Expanded(
@@ -488,7 +494,7 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
                     SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'Đơn này do Quản lý chi nhánh phê duyệt. Bạn không cần phản hồi.',
+                        'Bạn chỉ có thể phản hồi khi là người nhận đơn đang chờ xác nhận. Đơn ở chế độ quản lý duyệt cần được quản lý xử lý.',
                         style: TextStyle(
                           fontSize: 13.5,
                           fontWeight: FontWeight.bold,

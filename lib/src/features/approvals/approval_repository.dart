@@ -8,8 +8,12 @@ class ApprovalRepository {
   final ApiClient api;
   ApprovalRepository({ApiClient? api}) : api = api ?? ApiClient();
 
-  Future<List<LeaveRequestModel>> getPending() async {
-    final data = await api.getJson('/api/requests', query: {'status': 'pending'});
+  Future<List<LeaveRequestModel>> getPending() => getRequests(status: 'pending');
+
+  Future<List<LeaveRequestModel>> getRequests({String? status}) async {
+    final data = await api.getJson('/api/requests', query: {
+      if (status != null) 'status': status,
+    });
     final List list = data is List ? data : [];
     return list
         .whereType<Map<String, dynamic>>()
@@ -23,6 +27,8 @@ class ApprovalRepository {
     final data = await api.getJson('/api/requests/$id');
     return LeaveRequestModel.fromJson((data as Map).cast<String, dynamic>());
   }
+
+  Future<void> deleteRequest(String id) => api.delete('/api/requests/${Uri.encodeComponent(id)}');
 
   Future<void> approve(String id, {String? note}) => api.putJson(
         '/api/requests/$id/approve',

@@ -319,10 +319,7 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
               const Text('Tùy chọn', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
               const SizedBox(height: 10),
               if (isSkipped) ...[
-                // Ca bị bỏ qua vì quên chốt ra: admin/manager chốt lại bằng CHÍNH
-                // hành động check-out thường (POST /api/attendance/checkout kèm
-                // shiftId của ca, không phải "chấm công hộ"). Backend tự áp quyền
-                // theo chi nhánh và trả message tiếng Việt khi bị từ chối (400/403).
+                // Quản lý chọn giờ thực tế và ghi qua API sửa công.
                 _buildActionButton(
                   title: 'Xác nhận Ra ca',
                   icon: FontAwesomeIcons.rightFromBracket,
@@ -479,7 +476,7 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
         );
         return;
       }
-      await (attendance ?? AttendanceRepository()).checkIn(
+      await (attendance ?? AttendanceRepository()).checkInWithDeviceWifi(
         employeeId: staff.id,
         shiftId: staff.shiftId,
       );
@@ -502,23 +499,45 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
     }
   }
 
-  /// Chốt ra một ca bị bỏ qua (`attendanceState` = 'missed_checkout') bằng
-  /// chính hành động check-out thường. `shiftId` là id dòng ca thật
-  /// (`staff.shiftId` từ GET /api/shifts) — bắt buộc khi chốt cho nhân viên
-  /// khác để backend đóng đúng bản ghi. Giờ ra do server tính, client không gửi.
-  /// Thành công thì pop(true) để màn lịch chung tải lại, nhãn 'Bỏ qua ca' biến mất.
-  /// Lỗi 400/403 thì hiện đúng `error.message` của backend (envelope { error }).
+  /// Ca quá hạn phải dùng API sửa công dành cho quản lý, checkout thường đã đóng.
   Future<void> _handleCheckOutSkipped(BuildContext context) async {
     try {
-      await (attendance ?? AttendanceRepository()).checkOut(
-        employeeId: staff.id,
+      final repo = attendance ?? AttendanceRepository();
+      final records = await repo.getAttendance(employeeId: staff.id);
+      final row = records.where((r) => r.shiftId == staff.shiftId).firstOrNull;
+      final checkIn = parseVnDate(row?.checkIn);
+      final workDate = parseVnDate(day.date);
+      if (checkIn == null || workDate == null) {
+        throw const ApiException('MISSING_ATTENDANCE', 'Không đọc được giờ vào ca để bổ sung công', 400);
+      }
+      final endParts = shift.endTime.split(':').map(int.parse).toList();
+      var endDay = DateTime(workDate.year, workDate.month, workDate.day);
+      if (shift.endTime.compareTo(shift.startTime) <= 0) {
+        endDay = endDay.add(const Duration(days: 1));
+      }
+      if (!context.mounted) return;
+      final time = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay(hour: endParts[0], minute: endParts[1]),
+        helpText: 'Giờ ra ca ngày ${vnDate(endDay)}',
+        confirmText: 'Lưu giờ ra',
+      );
+      if (time == null || !context.mounted) return;
+      final checkOut = DateTime(endDay.year, endDay.month, endDay.day, time.hour, time.minute);
+      if (checkOut.isBefore(checkIn) || checkOut.isAfter(DateTime.now())) {
+        throw const ApiException('INVALID_TIME', 'Giờ ra phải sau giờ vào và không nằm trong tương lai', 400);
+      }
+      await repo.saveAttendance(
         shiftId: staff.shiftId,
+        checkIn: checkIn,
+        checkOut: checkOut,
+        note: 'Quản lý bổ sung giờ ra ca bị bỏ qua',
       );
       if (!context.mounted) return;
       Navigator.pop(context, true);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('✅ Đã chốt ra ca ${shift.shiftName} của ${staff.name}'),
+          content: Text('✅ Đã bổ sung giờ ra ca ${shift.shiftName} của ${staff.name}'),
           backgroundColor: AppColors.success,
         ),
       );

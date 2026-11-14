@@ -4,6 +4,7 @@ import '../../core/constants/colors.dart';
 import '../../core/models/user.dart';
 import '../../core/models/branch.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/detail_loader.dart';
 import '../../core/utils/date_format.dart';
 import '../profile/employee_repository.dart';
 import 'news_repository.dart';
@@ -36,10 +37,14 @@ class NewsArticle {
 
 class NewsScreen extends StatefulWidget {
   final UserModel currentUser;
+  final NewsRepository? repository;
+  final EmployeeRepository? employeeRepository;
 
   const NewsScreen({
     super.key,
     required this.currentUser,
+    this.repository,
+    this.employeeRepository,
   });
 
   @override
@@ -47,8 +52,8 @@ class NewsScreen extends StatefulWidget {
 }
 
 class _NewsScreenState extends State<NewsScreen> {
-  final NewsRepository _newsRepo = NewsRepository();
-  final EmployeeRepository _empRepo = EmployeeRepository();
+  late final NewsRepository _newsRepo = widget.repository ?? NewsRepository();
+  late final EmployeeRepository _empRepo = widget.employeeRepository ?? EmployeeRepository();
   List<NewsArticle> _articles = [];
   List<Branch> _branches = [];
   String? _loadError;
@@ -105,7 +110,9 @@ class _NewsScreenState extends State<NewsScreen> {
     return raw;
   }
 
-  void _showDetail(BuildContext context, NewsArticle article) {
+  Future<void> _showDetail(BuildContext context, NewsArticle selected) async {
+    final article = await loadApiDetail(context, () => _newsRepo.getNewsById(selected.id));
+    if (!context.mounted || article == null) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,

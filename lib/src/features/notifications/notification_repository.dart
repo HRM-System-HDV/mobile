@@ -3,9 +3,9 @@ import '../../core/network/api_client.dart';
 
 /// Repository thông báo gọi qua api-gateway về integration-service (4005).
 ///
-/// Backend có: GET/POST /api/notifications, PUT /api/notifications/:id/read,
+/// Backend có: GET /api/notifications, PUT /api/notifications/:id/read,
 /// PUT /api/notifications/read-all, GET/PUT /api/notifications/settings,
-/// POST /api/notifications/reminders (integration-service/src/app.js:50-56).
+/// GET thông báo cũng tạo nhắc theo cài đặt; không có POST gửi/nhắc riêng.
 /// KHÔNG có DELETE /api/notifications/:id.
 class NotificationRepository {
   final ApiClient api;

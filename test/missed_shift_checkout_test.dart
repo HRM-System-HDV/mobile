@@ -100,7 +100,7 @@ void main() {
     expect(find.textContaining('liên hệ quản lý hoặc admin'), findsOneWidget);
   });
 
-  testWidgets('Chốt ca bị bỏ qua gọi check-out với shiftId và hiện đúng message backend',
+  testWidgets('Chốt ca quá hạn dùng API sửa công và hiện đúng message backend',
       (tester) async {
     final staff = _missedStaff();
     final shift = _shift(staff);
@@ -108,7 +108,12 @@ void main() {
         'Bạn chỉ chốt được ca của chi nhánh mình quản lý';
 
     final mockApi = MockApiClient();
-    mockApi.postJsonHandler = (path, payload) {
+    mockApi.getJsonResponse = [{
+      'id': 'att-1', 'employeeId': staff.id, 'shiftId': staff.shiftId,
+      'workDate': '2020-01-01', 'checkIn': DateTime(2020, 1, 1, 7).toUtc().toIso8601String(),
+      'status': 'present',
+    }];
+    mockApi.putJsonHandler = (path, payload) {
       throw const ApiException('FORBIDDEN', backendMsg, 403);
     };
 
@@ -135,15 +140,16 @@ void main() {
     await tester.tap(find.text('Xác nhận Ra ca'));
     await tester.pump();
 
-    // Payload: chốt hộ bằng check-out thường. work-service chỉ chấp nhận
-    // employeeId/shiftId/wifi; giờ ra do server lấy Time.now, nên gửi thêm
-    // checkoutTime hay attendanceId đều bị từ chối.
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Lưu giờ ra'));
+    await tester.pumpAndSettle();
+
     final req = mockApi.requests.last;
-    expect(req.path, '/api/attendance/checkout');
-    expect(req.payload?['employeeId'], 'emp-1');
-    expect(req.payload?['shiftId'], 'shift-row-1');
-    expect(req.payload?.containsKey('attendanceId'), isFalse);
-    expect(req.payload?.containsKey('checkoutTime'), isFalse);
+    expect(req.method, 'PUT');
+    expect(req.path, '/api/attendance/shift-row-1');
+    expect(DateTime.parse(req.payload!['checkIn']).toLocal(), DateTime(2020, 1, 1, 7));
+    expect(DateTime.parse(req.payload!['checkOut']).toLocal(), DateTime(2020, 1, 1, 15));
+    expect(req.payload?.containsKey('employeeId'), isFalse);
 
     // Message của backend (envelope error.message) hiện nguyên văn, không tự chế.
     expect(find.text(backendMsg), findsOneWidget);
