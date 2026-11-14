@@ -1,19 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
+import 'package:network_info_plus/network_info_plus.dart';
 import '../../core/constants/colors.dart';
 import '../../core/config/company.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/models/user.dart';
 import '../../core/network/api_client.dart';
+import '../../core/services/notification_service.dart';
 import '../../core/utils/image_helper.dart';
 import '../schedule/schedule.dart';
-import '../salary/salary.dart';
-import '../leave_request/leave.dart';
-import '../schedule/registration.dart';
 import '../tasks/task_service.dart';
 import '../tasks/task_repository.dart';
-import '../tasks/tasks.dart';
 import '../attendance/attendance_repository.dart';
 import '../schedule/shift_repository.dart';
 import '../wifi_config/wifi_config_repository.dart';
@@ -37,18 +36,29 @@ class _HomeScreenState extends State<HomeScreen> {
   ShiftDetail? _checkedInShift;
   DateTime? _checkedInTime;
   List<ApiShiftModel> _todayShifts = [];
+  /// Tên ca mẫu theo `templateId` — `/api/shifts` chỉ trả id, không trả tên.
+  Map<String, String> _templateNames = const {};
   final WifiConfigRepository _wifiRepo = WifiConfigRepository();
   final TaskRepository _taskRepo = TaskRepository();
   List<WifiConfigModel> _wifiConfigs = [];
   List<TaskModel> _homeTasks = [];
   String? _loadedWifiBranchKey;
-  String? _loadedTaskBranchKey;
   String? _loadedShiftUserKey;
   String? _shiftsError;
   String? _wifiError;
   String? _tasksError;
+  String? _hardwareBssid;
+  String? _hardwareSsid;
+
+  /// Đơn giá giờ công chỉ có trong hồ sơ nhân sự
+  /// (GET /api/employees/:employeeId), token user không có trường này.
+  double _hourlySalary = 0;
+  final NetworkInfo _networkInfo = NetworkInfo();
 
   UserModel get currentUser => (mounted ? UserScope.currentUser(context) : null) ?? widget.currentUser;
+
+  /// UUID hồ sơ nhân sự — work-service chỉ nhận giá trị này cho chấm công.
+  String get _employeeId => currentUser.employeeId ?? '';
 
   @override
   void initState() {
@@ -56,53 +66,92 @@ class _HomeScreenState extends State<HomeScreen> {
     _todayShifts = [];
     _fetchTodayShifts();
     _loadHomeTasks();
+    _fetchHardwareWifi();
+  }
+
+  Future<void> _fetchHardwareWifi() async {
+    try {
+      final bssid = await _networkInfo.getWifiBSSID();
+      final ssid = await _networkInfo.getWifiName();
+      if (mounted) {
+        setState(() {
+          _hardwareBssid = bssid;
+          _hardwareSsid = (ssid != null && ssid != '<unknown ssid>') ? ssid.replaceAll('"', '') : null;
+        });
+      }
+    } catch (_) {
+      // Defensive fallback if permission denied or running on simulator/emulator
+    }
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final branch = BranchScope.selectedBranch(context);
-    final key = branch?.code ?? '__all__';
+    final key = branch?.id ?? '__all__';
     if (_loadedWifiBranchKey != key) {
       _loadedWifiBranchKey = key;
-      _fetchWifiConfigs(branchCode: branch?.code);
-    }
-    if (_loadedTaskBranchKey != key) {
-      _loadedTaskBranchKey = key;
-      _loadHomeTasks(branchSlug: branch?.slug);
+      _fetchWifiConfigs(branchId: branch?.id);
     }
     final userKey = currentUser.id.isNotEmpty ? currentUser.id : currentUser.email;
     if (_loadedShiftUserKey != userKey) {
       _loadedShiftUserKey = userKey;
-      _fetchTodayShifts(employeeId: userKey.isNotEmpty ? userKey : null);
-      _refreshAvatar();
+      _fetchTodayShifts(employeeId: currentUser.employeeId);
+      _refreshEmployeeProfileData();
     }
   }
 
-  /// Avatar nằm ở organization-service chứ không có trong /api/auth/me, nên phải
-  /// đọc lại hồ sơ để ảnh sửa từ nơi khác vẫn hiện ở Trang chủ.
-  Future<void> _refreshAvatar() async {
+  /// Avatar và đơn giá lương nằm ở organization-service chứ không có trong
+  /// /api/auth/me, nên phải đọc lại hồ sơ nhân sự theo employeeId. Lỗi đọc hồ sơ
+  /// không được làm hỏng màn Trang chủ.
+  Future<void> _refreshEmployeeProfileData() async {
     final me = currentUser;
-    if (me.id.isEmpty) return;
-    final profile = await EmployeeRepository().getEmployee(me.id);
+    final employeeId = me.employeeId;
+    if (employeeId == null || employeeId.isEmpty) return;
+    Map<String, dynamic>? profile;
+    try {
+      profile = await EmployeeRepository().getEmployee(employeeId);
+    } catch (_) {
+      return;
+    }
     if (!mounted) return;
     final current = UserScope.currentUser(context);
     if (current == null || current.id != me.id) return;
-    final avatar = profile?['avatar']?.toString();
-    if (avatar == null || avatar == current.avatarUrl) return;
-    UserScope.setUser(context, current.copyWith(avatarUrl: avatar));
+    final salary = double.tryParse(profile?['salary']?.toString() ?? '') ?? 0;
+    final avatar = profile?['avatar']?.toString() ?? '';
+    if (avatar.isNotEmpty && avatar != current.avatarUrl) {
+      UserScope.setUser(context, current.copyWith(avatarUrl: avatar));
+    }
+    setState(() {
+      _hourlySalary = profile?['salaryType'] == 'hourly' ? salary : 0;
+    });
   }
 
   Future<void> _fetchTodayShifts({String? employeeId}) async {
     try {
       final shifts = await ShiftRepository().getShifts(
-        employeeId: employeeId ?? (currentUser.id.isNotEmpty ? currentUser.id : null),
+        employeeId: employeeId ?? currentUser.employeeId,
       );
+      final templateNames = <String, String>{};
+      try {
+        for (final t in await ShiftRepository().getTemplates()) {
+          final id = t['id']?.toString() ?? '';
+          final name = t['name']?.toString() ?? '';
+          if (id.isNotEmpty && name.isNotEmpty) templateNames[id] = name;
+        }
+      } catch (_) {
+        // Thiếu danh mục ca mẫu chỉ làm mất nhãn hiển thị, không được ẩn lịch.
+      }
       if (mounted) {
         setState(() {
           _todayShifts = shifts;
+          _templateNames = templateNames;
           _shiftsError = null;
         });
+        ShiftReminders.reschedule(
+          employeeId: currentUser.employeeId,
+          shifts: shifts,
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -114,9 +163,9 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _fetchWifiConfigs({String? branchCode}) async {
+  Future<void> _fetchWifiConfigs({String? branchId}) async {
     try {
-      final configs = await _wifiRepo.getWifiConfigs(branch: branchCode ?? '');
+      final configs = await _wifiRepo.getWifiConfigs(branchId: branchId ?? '');
       if (mounted) {
         setState(() {
           _wifiConfigs = configs;
@@ -133,12 +182,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _loadHomeTasks({String? branchSlug}) async {
+  Future<void> _loadHomeTasks() async {
     try {
-      final tasks = await _taskRepo.getTasks(
-        branchSlug: branchSlug,
-        assigneeId: currentUser.id.isNotEmpty ? currentUser.id : null,
-      );
+      // Gọi giống hệt màn Nhiệm vụ: backend tự giới hạn nhân viên chỉ thấy việc
+      // của mình (scopeTaskQuery). Lọc thêm assignedTo ở đây từng gây lệch vì
+      // assignedTo lưu id hồ sơ nhân sự, không trùng id đăng nhập.
+      final tasks = await _taskRepo.getTasks();
       if (mounted) {
         setState(() {
           _homeTasks = tasks;
@@ -155,16 +204,22 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// SSID Wi-Fi chấm công lấy từ API wifi-configs theo chi nhánh, fallback '—'.
+  /// SSID Wi-Fi chấm công lấy từ phần cứng hoặc API wifi-configs theo chi nhánh, fallback '—'.
   String _wifiSsidOrDash() {
+    if (_hardwareSsid != null && _hardwareSsid!.isNotEmpty) {
+      return _hardwareSsid!;
+    }
     if (_wifiConfigs.isNotEmpty && _wifiConfigs.first.ssid.isNotEmpty) {
       return _wifiConfigs.first.ssid;
     }
     return '—';
   }
 
-  /// Nhãn BSSID từ config Wi-Fi; thiết bị chưa được xác minh nên không khẳng định hợp lệ.
+  /// Nhãn BSSID từ phần cứng thiết bị hoặc config Wi-Fi.
   String _wifiBssidLabel() {
+    if (_hardwareBssid != null && _hardwareBssid!.isNotEmpty) {
+      return 'BSSID: $_hardwareBssid (đã nhận diện)';
+    }
     if (_wifiError != null) {
       return 'Không tải được cấu hình Wi-Fi: $_wifiError';
     }
@@ -211,9 +266,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           title: 'Lịch làm việc',
                           subtitle: 'Xem ca & phân công',
                           icon: Icons.calendar_month_rounded,
-                          color: const Color(0xFF2563EB),
+                          color: AppColors.infoBlue,
                           onTap: () {
-                            Navigator.push(context, MaterialPageRoute(builder: (context) => const ScheduleScreen()));
+                            context.push('/schedule');
                           },
                         ),
                       ),
@@ -223,9 +278,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           title: 'Đăng ký nghỉ',
                           subtitle: 'Nghỉ ngày/ Nghỉ ca',
                           icon: Icons.beach_access_rounded,
-                          color: const Color(0xFFF59E0B),
+                          color: AppColors.warningAmber,
                           onTap: () {
-                            Navigator.push(context, MaterialPageRoute(builder: (_) => const LeaveRequestScreen()));
+                            context.push('/leave');
                           },
                         ),
                       ),
@@ -239,9 +294,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           title: 'Kỳ lương',
                           subtitle: 'Tạm tính thu nhập',
                           icon: Icons.payments_rounded,
-                          color: const Color(0xFF10B981),
+                          color: AppColors.successGreen,
                           onTap: () {
-                            Navigator.push(context, MaterialPageRoute(builder: (_) => const SalaryScreen()));
+                            context.push('/salary');
                           },
                         ),
                       ),
@@ -251,9 +306,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           title: 'Đăng ký ca làm',
                           subtitle: 'Chọn ca tuần tới',
                           icon: Icons.event_available_rounded,
-                          color: const Color(0xFF0EA5E9),
+                          color: AppColors.info,
                           onTap: () {
-                            Navigator.push(context, MaterialPageRoute(builder: (_) => const ScheduleRegistrationScreen()));
+                            context.push('/schedule/registration');
                           },
                         ),
                       ),
@@ -276,8 +331,9 @@ class _HomeScreenState extends State<HomeScreen> {
     return 'Chào buổi tối 👋';
   }
 
-  /// Ảnh đại diện lấy từ hồ sơ đã đồng bộ qua API (UserScope). Khi ảnh đang tải
-  /// hoặc lỗi thì hiện icon vai trò bên dưới, không giữ trạng thái lỗi vĩnh viễn.
+  /// Ảnh đại diện lấy từ `UserScope` (do _refreshEmployeeProfileData đồng bộ về
+  /// từ hồ sơ nhân sự). Khi ảnh đang tải hoặc lỗi thì hiện icon vai trò bên dưới,
+  /// không giữ trạng thái lỗi vĩnh viễn.
   Widget _buildAvatar() {
     final fallback = ColoredBox(
       color: AppColors.primary.withValues(alpha: 0.12),
@@ -432,11 +488,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Khi đã chấm công vào: chuyển nút sang màu vàng/amber nổi bật; khi chưa: màu đỏ
     final List<Color> gradientColors = isCheckedIn
-        ? const [Color(0xFFF59E0B), Color(0xFFD97706)]
+        ? const [AppColors.warningAmber, AppColors.warningDark]
         : const [AppColors.primary, AppColors.primaryDark];
 
     final Color shadowColor = isCheckedIn
-        ? const Color(0xFFD97706).withValues(alpha: 0.45)
+        ? AppColors.warningDark.withValues(alpha: 0.45)
         : AppColors.primary.withValues(alpha: 0.4);
 
     final String titleText = isCheckedIn ? 'Chấm công ra ca' : 'Chấm công vào ca';
@@ -554,6 +610,7 @@ class _HomeScreenState extends State<HomeScreen> {
       apiShifts: _todayShifts,
       user: currentUser,
       branchName: branch?.name,
+      templateNames: _templateNames,
       activeCheckedInShift: _checkedInShift,
     );
 
@@ -656,14 +713,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           Container(
                             padding: const EdgeInsets.all(14),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFFEF3C7),
+                              color: AppColors.warningBg,
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: const Color(0xFFFCD34D)),
+                              border: Border.all(color: AppColors.warningBorder),
                             ),
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Icon(Icons.event_busy_rounded, color: Color(0xFFD97706), size: 24),
+                                const Icon(Icons.event_busy_rounded, color: AppColors.warningDark, size: 24),
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: Column(
@@ -676,14 +733,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                         style: const TextStyle(
                                           fontWeight: FontWeight.bold,
                                           fontSize: 13.5,
-                                          color: Color(0xFF92400E),
+                                          color: AppColors.warningText,
                                         ),
                                       ),
                                       const SizedBox(height: 3),
                                       Text(
                                         _shiftsError ??
                                             'Bạn chưa được xếp vào ca nào trong ngày hôm nay. Vui lòng liên hệ Quản lý nếu cần bổ sung ca.',
-                                        style: const TextStyle(fontSize: 12, color: Color(0xFF92400E)),
+                                        style: const TextStyle(fontSize: 12, color: AppColors.warningText),
                                       ),
                                     ],
                                   ),
@@ -725,12 +782,20 @@ class _HomeScreenState extends State<HomeScreen> {
                       ? () async {
                           final targetShift = selectedShift!;
                           final now = DateTime.now();
+                          String? hardwareBssid = _hardwareBssid;
+                          try {
+                            hardwareBssid ??= await _networkInfo.getWifiBSSID();
+                          } catch (_) {}
+                          final effectiveBssid = (hardwareBssid != null && hardwareBssid.isNotEmpty)
+                              ? hardwareBssid
+                              : (_wifiConfigs.isNotEmpty && _wifiConfigs.first.bssid.isNotEmpty ? _wifiConfigs.first.bssid : null);
+
                           try {
                             await AttendanceRepository().checkIn(
-                              employeeId: currentUser.id,
-                              shiftId: targetShift.id.isNotEmpty ? targetShift.id : targetShift.shiftName,
+                              employeeId: _employeeId,
+                              shiftId: targetShift.id,
                               wifiSsid: wifiSsid,
-                              checkinTime: '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
+                              wifiBssid: effectiveBssid,
                             );
                             if (!context.mounted) return;
                             Navigator.pop(context);
@@ -738,6 +803,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               _checkedInShift = targetShift;
                               _checkedInTime = now;
                             });
+                            // Đã vào ca: hủy các nhắc check-in, giữ nhắc ra ca.
+                            ShiftReminders.reschedule(employeeId: currentUser.employeeId);
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 backgroundColor: AppColors.success,
@@ -748,7 +815,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             if (!context.mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                backgroundColor: const Color(0xFFDC2626),
+                                backgroundColor: AppColors.error,
                                 content: Text('❌ Chấm công thất bại: $e'),
                               ),
                             );
@@ -796,8 +863,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final bool isHourly = user.isHourlySalary;
     final double? hoursWorked = shift.hours;
     // Chỉ tạm tính khi có giờ ca và đơn giá thật; không bịa số giờ mặc định.
-    final int? earnedMoney = (hoursWorked != null && user.hourlySalary > 0)
-        ? (hoursWorked * user.hourlySalary).toInt()
+    final int? earnedMoney = (hoursWorked != null && _hourlySalary > 0)
+        ? (hoursWorked * _hourlySalary).toInt()
         : null;
 
     showModalBottomSheet(
@@ -847,9 +914,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFEF3C7),
+                          color: AppColors.warningBg,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFFF59E0B)),
+                          border: Border.all(color: AppColors.warningAmber),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -862,14 +929,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                     style: const TextStyle(
                                       fontSize: 15,
                                       fontWeight: FontWeight.bold,
-                                      color: Color(0xFF92400E),
+                                      color: AppColors.warningText,
                                     ),
                                   ),
                                 ),
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFD97706),
+                                    color: AppColors.warningDark,
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: const Text(
@@ -886,7 +953,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             const SizedBox(height: 8),
                             Text(
                               '• Vai trò: ${shift.role}\n• Chi nhánh: ${shift.branch}\n• Đã chấm công vào lúc: $checkInTimeStr',
-                              style: const TextStyle(fontSize: 12.5, color: Color(0xFF78350F), height: 1.4),
+                              style: const TextStyle(fontSize: 12.5, color: AppColors.warningText, height: 1.4),
                             ),
                           ],
                         ),
@@ -918,7 +985,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                          color: isHourly ? const Color(0xFFF0FDF4) : const Color(0xFFF8FAFC),
+                          color: isHourly ? AppColors.successBg : AppColors.surfaceSubtle,
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
                             color: isHourly ? Colors.green.shade300 : Colors.blueGrey.shade200,
@@ -952,7 +1019,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    'Tiền công ca (${hoursWorked ?? '—'}h × ${user.hourlySalary > 0 ? _formatCurrency(user.hourlySalary) : '—'} ₫/h):',
+                                    'Tiền công ca (${hoursWorked ?? '—'}h × ${_hourlySalary > 0 ? _formatCurrency(_hourlySalary) : '—'} ₫/h):',
                                     style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                                   ),
                                   Text(
@@ -971,13 +1038,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text('Khấu trừ phạt ca:', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                                  // Chưa có dữ liệu phạt từ API tại thời điểm ra ca.
+                                  // Phạt chỉ tính lúc chốt ra (cần checkOut) nên màn xác nhận chưa có số tiền.
                                   Text('—', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
                                 ],
                               ),
                               const SizedBox(height: 4),
                               const Text(
-                                '💡 Nhân viên hưởng lương cơ bản tháng. Ca làm việc không cộng/trừ giờ, chỉ hiển thị số tiền trừ khi có vi phạm phạt.',
+                                '💡 Lương cố định tháng: mỗi ca hoàn thành tính 1 công = lương tháng chia số công chuẩn. Vào muộn hoặc ra sớm bị trừ theo phần trăm cấu hình chi nhánh, chỉ có số tiền sau khi chốt ra.',
                                 style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontStyle: FontStyle.italic),
                               ),
                             ],
@@ -992,13 +1059,10 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: () async {
-                  final shiftOut = _checkedInShift;
-                  final now = DateTime.now();
                   try {
                     await AttendanceRepository().checkOut(
-                      employeeId: currentUser.id,
-                      shiftId: shiftOut != null && shiftOut.id.isNotEmpty ? shiftOut.id : shiftOut?.shiftName,
-                      checkoutTime: '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
+                      employeeId: _employeeId,
+                      shiftId: shift.id,
                     );
                     if (!context.mounted) return;
                     Navigator.pop(context);
@@ -1006,25 +1070,27 @@ class _HomeScreenState extends State<HomeScreen> {
                       _checkedInShift = null;
                       _checkedInTime = null;
                     });
+                    // Đã ra ca: hủy các nhắc quên check-out.
+                    ShiftReminders.reschedule(employeeId: currentUser.employeeId);
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         backgroundColor: AppColors.success,
                         // API checkout không trả số tiền được cộng nên không khẳng định đã cộng công.
-                        content: Text('✅ Chấm công ra ca ${shiftOut?.shiftName ?? ''} thành công!'),
+                        content: Text('✅ Chấm công ra ca ${shift.shiftName} thành công!'),
                       ),
                     );
                   } catch (e) {
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        backgroundColor: const Color(0xFFDC2626),
+                        backgroundColor: AppColors.error,
                         content: Text('❌ Chấm công ra ca thất bại: $e'),
                       ),
                     );
                   }
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFD97706),
+                  backgroundColor: AppColors.warningDark,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1068,12 +1134,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFDC2626).withValues(alpha: 0.12),
+                          color: AppColors.error.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Text(
                           '${activeTasks.length}',
-                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.error),
                         ),
                       ),
                     ],
@@ -1081,11 +1147,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 InkWell(
                   onTap: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => TaskListScreen(currentUser: currentUser)),
-                    );
-                    setState(() {});
+                    await context.push('/tasks', extra: currentUser);
+                    if (mounted) _loadHomeTasks();
                   },
                   borderRadius: BorderRadius.circular(8),
                   child: const Row(
@@ -1143,11 +1206,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 return InkWell(
                   onTap: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => TaskListScreen(currentUser: currentUser)),
-                    );
-                    setState(() {});
+                    await context.push('/tasks', extra: currentUser);
+                    if (mounted) _loadHomeTasks();
                   },
                   borderRadius: BorderRadius.circular(8),
                   child: Padding(
@@ -1161,15 +1221,12 @@ class _HomeScreenState extends State<HomeScreen> {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
                                   content: Text('📸 Nhiệm vụ này bắt buộc chụp ảnh kết quả. Vui lòng chụp ảnh minh chứng!'),
-                                  backgroundColor: Color(0xFFDC2626),
+                                  backgroundColor: AppColors.error,
                                   duration: Duration(seconds: 2),
                                 ),
                               );
-                              await Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (_) => TaskListScreen(currentUser: currentUser)),
-                              );
-                              setState(() {});
+                              await context.push('/tasks', extra: currentUser);
+                              if (mounted) _loadHomeTasks();
                             } else {
                               try {
                                 await _taskRepo.updateTaskStatus(task.id, 'completed');
@@ -1189,7 +1246,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text('❌ Cập nhật công việc thất bại: $e'),
-                                    backgroundColor: const Color(0xFFDC2626),
+                                    backgroundColor: AppColors.error,
                                     duration: const Duration(seconds: 2),
                                   ),
                                 );
@@ -1203,13 +1260,13 @@ class _HomeScreenState extends State<HomeScreen> {
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(6),
                               border: Border.all(
-                                color: task.requirePhoto ? const Color(0xFFDC2626) : Colors.grey.shade400,
+                                color: task.requirePhoto ? AppColors.error : Colors.grey.shade400,
                                 width: 1.6,
                               ),
                             ),
                             alignment: Alignment.center,
                             child: task.requirePhoto
-                                ? const Icon(Icons.camera_alt_outlined, size: 14, color: Color(0xFFDC2626))
+                                ? const Icon(Icons.camera_alt_outlined, size: 14, color: AppColors.error)
                                 : null,
                           ),
                         ),
@@ -1238,10 +1295,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                       decoration: BoxDecoration(
-                                        color: const Color(0xFFDC2626).withValues(alpha: 0.12),
+                                        color: AppColors.error.withValues(alpha: 0.12),
                                         borderRadius: BorderRadius.circular(4),
                                       ),
-                                      child: const Text('Quá giờ', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Color(0xFFDC2626))),
+                                      child: const Text('Quá giờ', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: AppColors.error)),
                                     ),
                                 ],
                               ),
@@ -1253,7 +1310,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               const SizedBox(height: 2),
                               Text(
                                 '${task.assignedByName} • Hạn: $dueLabel',
-                                style: TextStyle(fontSize: 11.5, color: isOverdue ? const Color(0xFFDC2626) : Colors.grey.shade600),
+                                style: TextStyle(fontSize: 11.5, color: isOverdue ? AppColors.error : Colors.grey.shade600),
                               ),
                             ],
                           ),

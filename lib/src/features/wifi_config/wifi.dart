@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:network_info_plus/network_info_plus.dart';
 import '../../core/constants/colors.dart';
 import '../../core/models/branch.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/branch_scope.dart';
-import '../../core/state/user_scope.dart';
 import '../../core/widgets/branch_selector.dart';
 import '../profile/employee_repository.dart';
 import 'wifi_config_repository.dart';
@@ -33,10 +33,10 @@ class _WifiEntry {
 
 class _WifiConfigScreenState extends State<WifiConfigScreen> {
   final WifiConfigRepository _repo = WifiConfigRepository();
+  final NetworkInfo _networkInfo = NetworkInfo();
   final List<_WifiEntry> _entries = [];
   bool _isSaving = false;
-  bool _isScanning = false;
-  List<Map<String, dynamic>> _scannedNetworks = [];
+  bool _isReadingWifi = false;
 
   String? _loadedBranchId;
 
@@ -58,7 +58,7 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
 
     // Gọi API thật từ gateway/integration-service (4005)
     try {
-      final remoteList = await _repo.getWifiConfigs(branch: branch.code);
+      final remoteList = await _repo.getWifiConfigs(branchId: branch.id);
       if (mounted && _loadedBranchId == branch.id) {
         _disposeEntries();
         for (final item in remoteList) {
@@ -98,180 +98,61 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
     _entries.clear();
   }
 
-  Future<void> _scanNearbyWifi() async {
-    setState(() => _isScanning = true);
+  _WifiEntry _addNetwork() {
+    final entry = _WifiEntry(
+      ssidController: TextEditingController(),
+      bssidController: TextEditingController(),
+      enforceCheckIn: true,
+    );
+    setState(() => _entries.add(entry));
+    return entry;
+  }
+
+  /// Dòng đầu tiên chưa nhập SSID lẫn BSSID — nơi ghi Wi-Fi của thiết bị vào.
+  _WifiEntry? _firstEmptyEntry() {
+    for (final entry in _entries) {
+      if (entry.ssidController.text.trim().isEmpty &&
+          entry.bssidController.text.trim().isEmpty) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /// Đọc SSID/BSSID của mạng mà chính thiết bị đang kết nối qua network_info_plus
+  /// — cùng cơ chế tab Trang chủ dùng khi gửi kèm `wifi` trong payload chấm công.
+  ///
+  /// Server KHÔNG có endpoint quét mạng xung quanh (chỉ có GET/POST/PUT/DELETE
+  /// /api/wifi-configs), nên thao tác này chạy hoàn toàn trên thiết bị: emulator
+  /// hoặc tài khoản chưa cấp quyền vị trí sẽ không đọc được gì và app báo lỗi.
+  Future<void> _fillCurrentWifi() async {
+    setState(() => _isReadingWifi = true);
+    String ssid = '';
+    String bssid = '';
     try {
-      final list = await _repo.scanNearbyWifi();
-      if (!mounted) return;
-      setState(() {
-        _scannedNetworks = list;
-        _isScanning = false;
-      });
-      _showScannedWifiModal();
-    } catch (e) {
-      if (mounted) setState(() => _isScanning = false);
-      _showError(_errorText(e));
+      final rawSsid = await _networkInfo.getWifiName();
+      // network_info_plus trả SSID bọc trong dấu nháy kép hoặc '<unknown ssid>'.
+      if (rawSsid != null && rawSsid != '<unknown ssid>') {
+        ssid = rawSsid.replaceAll('"', '').trim();
+      }
+      bssid = (await _networkInfo.getWifiBSSID())?.trim() ?? '';
+    } catch (_) {
+      // Thiếu quyền / nền tảng không hỗ trợ: coi như không đọc được Wi-Fi.
     }
-  }
+    if (!mounted) return;
+    setState(() => _isReadingWifi = false);
 
-  void _showScannedWifiModal() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        height: MediaQuery.of(context).size.height * 0.65,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          children: [
-            Container(
-              margin: const EdgeInsets.only(top: 10, bottom: 6),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const FaIcon(FontAwesomeIcons.wifi, color: AppColors.primary, size: 18),
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Mạng Wi-Fi máy chủ đã lưu',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                        ),
-                        SizedBox(height: 2),
-                        Text(
-                          'Chạm vào mạng để tự động điền SSID',
-                          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: const FaIcon(FontAwesomeIcons.xmark, size: 18, color: AppColors.textSecondary),
-                    onPressed: () => Navigator.pop(ctx),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            Expanded(
-              child: _scannedNetworks.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          FaIcon(FontAwesomeIcons.wifi, size: 40, color: Colors.grey.shade300),
-                          const SizedBox(height: 12),
-                          const Text('Máy chủ chưa lưu mạng Wi-Fi nào',
-                              style: TextStyle(color: AppColors.textSecondary)),
-                        ],
-                      ),
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      itemCount: _scannedNetworks.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final net = _scannedNetworks[index];
-                        final ssid = net['ssid']?.toString() ?? '';
-
-                        return ListTile(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          leading: Container(
-                            width: 38,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              color: AppColors.primary.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: const Center(
-                              child: Icon(
-                                Icons.wifi_rounded,
-                                color: AppColors.primary,
-                                size: 22,
-                              ),
-                            ),
-                          ),
-                          title: Text(
-                            ssid,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14.5),
-                          ),
-                          subtitle: const Text(
-                            'SSID máy chủ đã lưu • chưa đo cường độ sóng',
-                            style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
-                          ),
-                          trailing: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: AppColors.primary.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Text(
-                              'Chọn',
-                              style: TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            _applyScannedWifi(ssid);
-                          },
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _applyScannedWifi(String ssid) {
-    if (_entries.isNotEmpty && _entries.first.ssidController.text.trim().isEmpty) {
-      _entries.first.ssidController.text = ssid;
-    } else {
-      _entries.add(_WifiEntry(
-        ssidController: TextEditingController(text: ssid),
-        bssidController: TextEditingController(),
-        enforceCheckIn: true,
-      ));
+    if (ssid.isEmpty && bssid.isEmpty) {
+      _showError(
+        'Không đọc được Wi-Fi thiết bị đang kết nối. Hãy bấm "Thêm thủ công" và nhập SSID/BSSID.',
+      );
+      return;
     }
+
+    final entry = _firstEmptyEntry() ?? _addNetwork();
+    entry.ssidController.text = ssid;
+    entry.bssidController.text = bssid;
     setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Đã chọn mạng "$ssid"'),
-        backgroundColor: AppColors.primary,
-        duration: const Duration(seconds: 1),
-      ),
-    );
-  }
-
-  void _addNetwork() {
-    setState(() {
-      _entries.add(_WifiEntry(
-        ssidController: TextEditingController(),
-        bssidController: TextEditingController(),
-        enforceCheckIn: true,
-      ));
-    });
   }
 
   Future<void> _removeNetwork(int index) async {
@@ -317,14 +198,14 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
           await _repo.updateWifiConfig(entry.apiId!, {
             'ssid': ssid,
             'bssid': bssid,
-            'branch': branch.code,
+            'branchId': branch.id,
             'status': status,
           });
         } else {
           final created = await _repo.createWifiConfig(
             ssid: ssid,
             bssid: bssid,
-            branch: branch.code,
+            branchId: branch.id,
             status: status,
           );
           entry.apiId = created.id;
@@ -448,17 +329,17 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bool isAdmin = UserScope.isAdmin(context);
-    final String pageTitle = isAdmin ? 'Cấu hình Wi-Fi' : 'Wi-Fi chi nhánh';
+    // Toàn bộ tuyến /api/wifi-configs chỉ mở cho admin, routing đã chặn
+    // manager/staff vào /wifi nên màn này chỉ người quản trị xem được.
     final Branch? branch = BranchScope.selectedBranch(context);
     final bool isAll = branch == null;
 
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: Text(
-          pageTitle,
-          style: const TextStyle(
+        title: const Text(
+          'Cấu hình Wi-Fi',
+          style: TextStyle(
             color: AppColors.textPrimary,
             fontWeight: FontWeight.bold,
             fontSize: 18,
@@ -514,8 +395,9 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
                 ],
               ),
             )
-          else
+          else ...[
             _buildConfigForm(branch),
+          ],
         ],
       ),
     );
@@ -525,9 +407,9 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (int i = 0; i < _entries.length; i++) _buildNetworkCard(_entries[i], i),
+        for (int i = 0; i < _entries.length; i++)
+          _buildNetworkCard(_entries[i], i),
         const SizedBox(height: 12),
-
         Row(
           children: [
             Expanded(
@@ -548,22 +430,22 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: ElevatedButton.icon(
-                onPressed: _isScanning ? null : _scanNearbyWifi,
-                icon: _isScanning
+              child: OutlinedButton.icon(
+                onPressed: _isReadingWifi ? null : _fillCurrentWifi,
+                icon: _isReadingWifi
                     ? const SizedBox(
                         width: 15,
                         height: 15,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const FaIcon(FontAwesomeIcons.wifi, size: 15),
                 label: const Text(
-                  'Quét mạng quanh đây',
+                  'Lấy Wi-Fi hiện tại',
                   style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
                 ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: BorderSide(color: AppColors.primary.withValues(alpha: 0.4)),
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
@@ -572,7 +454,6 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
           ],
         ),
         const SizedBox(height: 20),
-
         SizedBox(
           width: double.infinity,
           height: 50,
@@ -687,12 +568,12 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Bắt buộc dùng mạng này để chấm công',
+                      'Dùng mạng này khi chấm công',
                       style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                     ),
                     SizedBox(height: 2),
                     Text(
-                      'Nhân viên chỉ chấm công được khi kết nối đúng Wi-Fi chi nhánh',
+                      'Khi bấm nút Chấm công, app gửi kèm SSID/BSSID của mạng đang nối. Hệ thống chưa chặn chấm công nếu Wi-Fi không khớp',
                       style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
                     ),
                   ],

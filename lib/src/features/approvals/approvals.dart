@@ -24,6 +24,7 @@ class ShiftRequest {
   final String? swapWithName;
   final String reason;
   final String submittedAt;
+  final String? shiftSwapMode;
   ShiftRequestStatus status;
 
   ShiftRequest({
@@ -37,8 +38,14 @@ class ShiftRequest {
     this.swapWithName,
     required this.reason,
     required this.submittedAt,
+    this.shiftSwapMode,
     this.status = ShiftRequestStatus.pending,
   });
+
+  /// Đơn đổi ca ở chế độ tự chấp nhận: BE chặn manager duyệt (chỉ admin ghi hộ
+  /// được), người được nhờ mới có quyền accept/decline.
+  bool get peerMustRespond =>
+      type == ShiftRequestType.swap && shiftSwapMode == 'mutual_acceptance';
 }
 
 // ─── Screen ──────────────────────────────────────────────────────────────────
@@ -81,8 +88,6 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
           ShiftRequestType t = ShiftRequestType.leave;
           if (m.type == 'advance') {
             t = ShiftRequestType.advance;
-          } else if (m.type == 'overtime') {
-            t = ShiftRequestType.coverMe;
           } else if (m.type == 'shift_swap') {
             t = ShiftRequestType.swap;
           } else if (m.type == 'work_supplement') {
@@ -90,7 +95,7 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
           }
           final emp = empMap[m.employeeId];
           final name = emp?['name']?.toString() ?? 'Nhân sự #${m.employeeId}';
-          final role = emp?['role']?.toString() ?? (m.branchSlug ?? 'Nhân viên');
+          final role = emp?['role']?.toString() ?? 'Nhân viên';
           final avatar = name.trim().split(' ').where((s) => s.isNotEmpty).map((s) => s[0]).take(2).join().toUpperCase();
 
           return ShiftRequest(
@@ -102,6 +107,7 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
             currentShift: m.title,
             reason: m.content,
             submittedAt: m.createdAt ?? '—',
+            shiftSwapMode: m.shiftSwapMode,
             status: ShiftRequestStatus.pending,
           );
         }).toList();
@@ -154,7 +160,9 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
     if (!mounted) return;
     setState(() => request.status = ShiftRequestStatus.approved);
     final text = request.type == ShiftRequestType.swap
-        ? '✅ Quản lý đã duyệt đồng ý hộ đổi ca cho ${request.staffName}'
+        // Duyệt đổi ca là lệnh đổi lịch phân ca thật (integration-service gọi
+        // /api/shifts/swap trước khi ghi approved), không chỉ chốt mẫu đơn.
+        ? '✅ Đã duyệt đổi ca và cập nhật lịch phân ca của ${request.staffName}'
         : '✅ Đã duyệt yêu cầu của ${request.staffName}';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -194,6 +202,9 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
   Widget build(BuildContext context) {
     final bool isAdmin = UserScope.isAdmin(context);
     final String pageTitle = isAdmin ? 'Phê duyệt yêu cầu' : 'Duyệt yêu cầu chi nhánh';
+    // Chỉ Admin/Manager mới có quyền duyệt ⇒ nhân viên vào màn này (deep link)
+    // không thấy nút Duyệt/Từ chối.
+    final bool canReview = UserScope.canManage(context);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -229,7 +240,7 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
             child: TabBarView(
               controller: _tabController,
               children: [
-                _buildRequestList(_pendingRequests, showActions: true),
+                _buildRequestList(_pendingRequests, showActions: canReview),
                 _buildRequestList(_approvedRequests, showActions: false),
                 _buildRequestList(_rejectedRequests, showActions: false),
               ],
@@ -327,6 +338,9 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
         }
 
         final isPending = request.status == ShiftRequestStatus.pending;
+        // BE chặn manager duyệt đơn đổi ca tự chấp nhận (403 "Đơn này do nhân viên
+        // đích phản hồi") — ẩn 2 nút, chỉ admin còn quyền ghi hộ.
+        final canActOnThis = !request.peerMustRespond || UserScope.isAdmin(context);
 
         return Container(
           padding: EdgeInsets.only(
@@ -457,7 +471,7 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
               ),
               const SizedBox(height: 20),
               // 2 nút xác nhận: Từ chối & Phê duyệt
-              if (isPending) ...[
+              if (isPending && canActOnThis) ...[
                 Row(
                   children: [
                     Expanded(
@@ -493,6 +507,36 @@ class _ShiftRequestScreenState extends State<ShiftRequestScreen>
                           padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
                       ),
+                    ),
+                  ],
+                ),
+              ] else if (isPending) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: const Text(
+                    'Đơn đổi ca này do nhân viên được nhờ tự phản hồi.',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    const Spacer(),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                      ),
+                      child: const Text('Đóng'),
                     ),
                   ],
                 ),

@@ -27,7 +27,6 @@ void main() {
       name: 'Người Dùng Test',
       email: 'test@company.com',
       role: 'staff',
-      roleTitle: 'Nhân viên',
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));

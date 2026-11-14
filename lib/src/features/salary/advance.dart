@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
-import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
 import '../leave_request/leave_repository.dart';
@@ -35,8 +34,10 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
   final LeaveRepository _leaveRepo = LeaveRepository();
   final SalaryRepository _salaryRepo = SalaryRepository();
   double? _estimatedSalary;
-  String? _lastUserId;
+  String? _lastEmployeeId;
   String? _loadError;
+  // Lỗi riêng của phần dữ liệu lương (ước tính hạn mức tạm ứng).
+  String? _salaryError;
 
   void _showError(String message) {
     if (!mounted) return;
@@ -48,31 +49,44 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final uid = UserScope.currentUser(context)?.id;
-    if (_lastUserId != uid) {
-      _lastUserId = uid;
+    final empId = UserScope.currentUser(context)?.employeeId;
+    if (_lastEmployeeId != empId) {
+      _lastEmployeeId = empId;
       _fetchAdvances();
       _fetchSalary();
     }
   }
 
   Future<void> _fetchSalary() async {
-    final uid = UserScope.currentUser(context)?.id;
+    // Payslip thuộc payroll-service, khóa ngoại là UUID nhân sự, không phải
+    // id tài khoản identity.
+    final empId = UserScope.currentUser(context)?.employeeId;
     try {
-      final payslips = await _salaryRepo.getPayslips(employeeId: uid);
+      final payslips = await _salaryRepo.getPayslips(employeeId: empId);
       if (mounted) {
         setState(() {
           if (payslips.isEmpty) {
             _estimatedSalary = null;
           } else {
+            // Lấy phiếu kỳ MỚI NHẤT (API trả desc theo ngày cấp) để ước
+            // tính đúng kỳ, không dùng bản ghi bất kỳ trong danh sách.
             final p = payslips.first;
             final net = p.netSalary > 0 ? p.netSalary : p.baseSalary;
             _estimatedSalary = net > 0 ? net : null;
           }
+          _salaryError = null;
         });
       }
-    } catch (_) {
-      // Không có dữ liệu lương thì giữ null để hiển thị '—'.
+    } catch (e) {
+      // Lỗi mạng/403 không được hiện như "chưa có dữ liệu lương".
+      if (mounted) {
+        setState(() {
+          _estimatedSalary = null;
+          _salaryError = e is ApiException
+              ? e.message
+              : 'Không tải được dữ liệu lương. Kiểm tra kết nối hoặc thử lại.';
+        });
+      }
     }
   }
 
@@ -91,9 +105,9 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
   }
 
   Future<void> _fetchAdvances() async {
-    final uid = UserScope.currentUser(context)?.id;
+    final empId = UserScope.currentUser(context)?.employeeId;
     try {
-      final list = await _leaveRepo.getRequests(employeeId: uid);
+      final list = await _leaveRepo.getRequests(employeeId: empId);
       if (mounted) {
         final apiRecords = list.where((m) => m.type == 'advance').map((m) {
           final amt = m.title.replaceFirst('Tạm ứng lương: ', '');
@@ -156,7 +170,7 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
                 hintText: _estimatedSalary != null
-                    ? 'Tối đa ${_formatCurrency((_estimatedSalary! / 2).round())}'
+                    ? 'Nhập số tiền muốn tạm ứng'
                     : 'Nhập số tiền muốn tạm ứng',
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -180,19 +194,28 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
               onPressed: () async {
                 final amount = amountController.text.trim();
                 final reason = reasonController.text.trim();
+                // Backend chỉ nhận advanceAmount là chuỗi số nguyên dương, tối đa 15 chữ số.
                 if (amount.isEmpty || reason.isEmpty) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Vui lòng nhập đầy đủ số tiền và lý do')),
                   );
                   return;
                 }
-                final user = UserScope.currentUser(context);
-                final empId = user?.id ?? '';
-                if (empId.isEmpty) {
-                  _showError('Không xác định được nhân sự đang đăng nhập');
+                if (!RegExp(r'^[1-9]\d{0,14}$').hasMatch(amount)) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      backgroundColor: AppColors.error,
+                      content: Text('Số tiền ứng phải là số nguyên dương tối đa 15 chữ số, không có dấu chấm'),
+                    ),
+                  );
                   return;
                 }
-                final branchSlug = BranchScope.selectedBranch(context)?.slug ?? user?.branchSlug ?? '';
+                final user = UserScope.currentUser(context);
+                final empId = user?.employeeId ?? '';
+                if (empId.isEmpty) {
+                  _showError('Tài khoản chưa gắn hồ sơ nhân sự');
+                  return;
+                }
 
                 try {
                   await _leaveRepo.createRequest({
@@ -200,7 +223,7 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
                     'title': 'Tạm ứng lương: $amount đ',
                     'content': reason,
                     'employeeId': empId,
-                    if (branchSlug.isNotEmpty) 'branchSlug': branchSlug,
+                    'advanceAmount': amount,
                   });
                   if (modalCtx.mounted) {
                     Navigator.pop(modalCtx);
@@ -236,7 +259,7 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
     final String salaryText =
         _estimatedSalary != null ? _formatCurrency(_estimatedSalary!.toInt()) : '—';
     final String maxAdvanceText =
-        _estimatedSalary != null ? _formatCurrency((_estimatedSalary! / 2).round()) : '—';
+        _estimatedSalary != null ? _formatCurrency(_estimatedSalary!.toInt()) : '—';
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -264,14 +287,14 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFF047857), Color(0xFF059669)],
+                colors: [AppColors.successDark, AppColors.successGreen],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF047857).withValues(alpha: 0.3),
+                  color: AppColors.successDark.withValues(alpha: 0.3),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),
@@ -293,7 +316,9 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Hạn mức được ứng tối đa (50%):', style: TextStyle(color: Colors.white, fontSize: 12.5)),
+                    // Hệ thống không áp dụng hạn mức 50% cho đơn tạm ứng nên
+                    // không được hiện con số hạn mức như thật.
+                    const Text('Lương ước tính kỳ gần nhất:', style: TextStyle(color: Colors.white, fontSize: 12.5)),
                     Text(maxAdvanceText, style: const TextStyle(color: Colors.amberAccent, fontSize: 14, fontWeight: FontWeight.bold)),
                   ],
                 ),
@@ -302,8 +327,30 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
           ),
           const SizedBox(height: 20),
 
-          const Text('Lịch sử các đợt tạm ứng', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-          const SizedBox(height: 10),
+          // Lỗi tải dữ liệu lương: không được hiện "—" như thể chưa có lương.
+          if (_salaryError != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF4E5),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFF5D9B5)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.wifi_off, size: 18, color: Color(0xFFB25E09)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _salaryError!,
+                      style: const TextStyle(fontSize: 12, color: Color(0xFF8A4B08)),
+                    ),
+                  ),
+                  TextButton(onPressed: _fetchSalary, child: const Text('Thử lại')),
+                ],
+              ),
+            ),
 
           if (_records.isEmpty)
             Container(
@@ -362,7 +409,7 @@ class _SalaryAdvanceScreenState extends State<SalaryAdvanceScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(rec.amount, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF047857))),
+                Text(rec.amount, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.successDark)),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),

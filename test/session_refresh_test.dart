@@ -16,6 +16,7 @@ void main() {
   late HttpServer server;
   late ApiClient api;
   late List<String> seenAuth;
+  late List<String?> seenCookie;
   late int refreshCalls;
   late int expiredCalls;
 
@@ -26,6 +27,7 @@ void main() {
     store.clear();
     ApiClient.clearSession();
     seenAuth = [];
+    seenCookie = [];
     refreshCalls = 0;
     expiredCalls = 0;
     ApiClient.onSessionExpired = () => expiredCalls++;
@@ -69,6 +71,7 @@ void main() {
         }
       } else {
         seenAuth.add(req.headers.value('authorization') ?? '');
+        seenCookie.add(req.headers.value('cookie'));
         if (req.headers.value('authorization') != 'Bearer good-access') {
           res.statusCode = 401;
           res.write(jsonEncode({
@@ -103,6 +106,18 @@ void main() {
     expect(await api.getJson('/api/me'), {'ok': true});
     expect(seenAuth, ['Bearer good-access']);
     expect(refreshCalls, 0);
+  });
+
+  // Tài khoản staff chỉ được đi bằng Authorization: Bearer; mang cookie
+  // hrm-session là gateway chặn 403 (api-gateway auth.js:41).
+  test('mobile không bao giờ gửi cookie phiên', () async {
+    api.setSession(accessToken: 'good-access', refreshToken: 'valid-refresh');
+
+    expect(await api.getJson('/api/me'), {'ok': true});
+    await api.postJson('/api/shifts/register', {'employeeId': 'e-1'});
+
+    expect(seenCookie, everyElement(isNull));
+    expect(seenCookie, isNotEmpty);
   });
 
   test('401 thì refresh rồi gửi lại đúng một lần và thành công', () async {

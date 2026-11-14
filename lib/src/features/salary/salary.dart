@@ -6,7 +6,6 @@ import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
 import '../attendance/attendance_repository.dart';
-import '../leave_request/leave_repository.dart';
 import '../schedule/shift_repository.dart';
 import 'salary_repository.dart';
 
@@ -46,7 +45,7 @@ class _SalaryScreenState extends State<SalaryScreen> {
 
   final SalaryRepository _salaryRepository = SalaryRepository();
   List<PayslipModel> _apiPayslips = const [];
-  String? _lastUserId;
+  String? _lastEmployeeId;
 
   @override
   void initState() {
@@ -64,9 +63,9 @@ class _SalaryScreenState extends State<SalaryScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final uid = UserScope.currentUser(context)?.id;
-    if (_lastUserId != uid) {
-      _lastUserId = uid;
+    final empId = UserScope.currentUser(context)?.employeeId;
+    if (_lastEmployeeId != empId) {
+      _lastEmployeeId = empId;
       _loadPayslips();
     }
   }
@@ -74,9 +73,16 @@ class _SalaryScreenState extends State<SalaryScreen> {
   String _monthQuery(String label) {
     final m = RegExp(r'(\d{2})/(\d{4})').firstMatch(label);
     if (m != null) {
-      return '${m.group(1)}-${m.group(2)}';
+      return '${m.group(2)}-${m.group(1)}';
     }
     return '';
+  }
+
+  /// `attendance.checkIn/checkOut` là mốc thời gian ISO có múi giờ, UI cần HH:mm.
+  String _timeOfHm(String? raw) {
+    final d = parseVnDate(raw);
+    if (d == null) return '--:--';
+    return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
   }
 
   PayslipModel? get _currentPayslip {
@@ -84,17 +90,21 @@ class _SalaryScreenState extends State<SalaryScreen> {
     for (final p in _apiPayslips) {
       if (p.month == q) return p;
     }
-    return _apiPayslips.isNotEmpty ? _apiPayslips.first : null;
+    // Không có phiếu đúng kỳ thì KHÔNG hiển thị phiếu của kỳ khác (trước đây
+    // lấy payslips.first nên người dùng thấy số tiền của kỳ khác dưới nhãn
+    // kỳ đang chọn).
+    return null;
   }
 
   Future<void> _loadPayslips() async {
-    final user = UserScope.currentUser(context);
-    final uid = user?.id;
+    // Mọi tuyến nghiệp vụ (payslip/shift/attendance) lọc theo UUID nhân sự,
+    // không dùng id tài khoản từ identity-service.
+    final employeeId = UserScope.currentUser(context)?.employeeId;
     final q = _monthQuery(_selectedMonth);
     Object? firstError;
     try {
       final items = await _salaryRepository.getPayslips(
-        employeeId: uid,
+        employeeId: employeeId,
         month: q.isNotEmpty ? q : null,
       );
       if (mounted) setState(() => _apiPayslips = items);
@@ -105,16 +115,16 @@ class _SalaryScreenState extends State<SalaryScreen> {
 
     // Tải danh sách ca làm việc để tính số ca/giờ được phân công
     try {
-      final allShifts = await ShiftRepository().getShifts(employeeId: uid);
+      final allShifts = await ShiftRepository().getShifts(employeeId: employeeId);
       int shiftCount = 0;
       double hoursCount = 0.0;
       bool hoursUnknown = false;
       for (final s in allShifts) {
-        // Lọc theo tháng đang chọn nếu có (đọc được cả DD/MM/YYYY lẫn ISO cũ)
-        final shiftDate = parseVnDate(s.date);
+        // Lọc theo tháng đang chọn (YYYY-MM) theo ngày làm việc của ca
+        final shiftDate = parseVnDate(s.workDate);
         if (q.isNotEmpty && shiftDate != null) {
           final shiftMonth =
-              '${shiftDate.month.toString().padLeft(2, '0')}-${shiftDate.year}';
+              '${shiftDate.year}-${shiftDate.month.toString().padLeft(2, '0')}';
           if (shiftMonth != q) continue;
         }
         shiftCount++;
@@ -150,31 +160,28 @@ class _SalaryScreenState extends State<SalaryScreen> {
     }
 
     try {
-      final atts = await AttendanceRepository().getAttendance(employeeId: uid);
+      final atts = await AttendanceRepository().getAttendance(employeeId: employeeId);
       final logs = <WorkLogItem>[];
       int doneShifts = 0;
       double doneHours = 0.0;
       bool hoursUnknown = false;
       for (final a in atts) {
-        // Lọc theo tháng (đọc được cả DD/MM/YYYY lẫn ISO cũ)
-        final attDate = parseVnDate(a.date);
+        // Lọc theo tháng đang chọn (YYYY-MM) theo ngày làm việc của bản ghi
+        final attDate = parseVnDate(a.workDate);
         if (q.isNotEmpty && attDate != null) {
           final attMonth =
-              '${attDate.month.toString().padLeft(2, '0')}-${attDate.year}';
+              '${attDate.year}-${attDate.month.toString().padLeft(2, '0')}';
           if (attMonth != q) continue;
         }
-        final date = a.date.trim().isNotEmpty ? toVnDate(a.date) : '—';
-        final checkIn = a.checkIn ?? '--:--';
-        final checkOut = a.checkOut ?? '--:--';
+        final date = a.workDate.trim().isNotEmpty ? toVnDate(a.workDate) : '—';
+        final checkIn = _timeOfHm(a.checkIn);
+        final checkOut = _timeOfHm(a.checkOut);
         double? hours;
-        if (a.checkIn != null && a.checkOut != null) {
-          final pIn = a.checkIn!.split(':');
-          final pOut = a.checkOut!.split(':');
-          if (pIn.length == 2 && pOut.length == 2) {
-            final mIn = (int.tryParse(pIn[0]) ?? 0) * 60 + (int.tryParse(pIn[1]) ?? 0);
-            final mOut = (int.tryParse(pOut[0]) ?? 0) * 60 + (int.tryParse(pOut[1]) ?? 0);
-            if (mOut > mIn) hours = (mOut - mIn) / 60.0;
-          }
+        final tIn = parseVnDate(a.checkIn);
+        final tOut = parseVnDate(a.checkOut);
+        if (tIn != null && tOut != null) {
+          final diff = tOut.difference(tIn).inMinutes;
+          if (diff > 0) hours = diff / 60.0;
         }
         doneShifts++;
         if (hours != null) {
@@ -183,9 +190,13 @@ class _SalaryScreenState extends State<SalaryScreen> {
           hoursUnknown = true;
         }
 
-        final status = a.status == 'late'
-            ? 'Đi trễ'
-            : (a.status == 'absent' ? 'Vắng mặt' : 'Đúng giờ');
+        final status = switch (a.status) {
+          'late' => 'Đi trễ',
+          'early_leave' => 'Về sớm',
+          'late_early_leave' => 'Trễ và về sớm',
+          'missed' => 'Vắng mặt',
+          _ => 'Đúng giờ',
+        };
         logs.add(WorkLogItem(
           date: date,
           checkIn: checkIn,
@@ -247,16 +258,14 @@ class _SalaryScreenState extends State<SalaryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bool isAdmin = UserScope.isAdmin(context);
-    final bool canManage = UserScope.canManage(context);
-    final String pageTitle = isAdmin
-        ? 'Phiếu lương toàn công ty'
-        : (canManage ? 'Bảng công & Lương chi nhánh' : 'Kỳ lương & Phiếu lương cá nhân');
+    // Màn này chỉ hiển thị phiếu lương của chính mình (fetch theo employeeId
+    // của phiên) nên tiêu đề không được hứa "chi nhánh" cho quản lý.
+    const String pageTitle = 'Kỳ lương & Phiếu lương cá nhân';
 
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: Text(pageTitle),
+        title: const Text(pageTitle),
         backgroundColor: Colors.white,
         centerTitle: true,
         elevation: 0,
@@ -314,14 +323,14 @@ class _SalaryScreenState extends State<SalaryScreen> {
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFF10B981), Color(0xFF059669)],
+                  colors: [AppColors.successGreen, AppColors.successDark],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF10B981).withValues(alpha: 0.3),
+                    color: AppColors.successGreen.withValues(alpha: 0.3),
                     blurRadius: 12,
                     offset: const Offset(0, 4),
                   ),
@@ -380,6 +389,8 @@ class _SalaryScreenState extends State<SalaryScreen> {
                 children: [
                   _buildSalaryRow('Lương cơ bản', _currentPayslip != null ? _formatCurrency(_currentPayslip!.baseSalary.toInt()) : '—'),
                   const Divider(height: 16),
+                  _buildSalaryRow('Thưởng', _currentPayslip != null ? _formatCurrency(_currentPayslip!.bonus.toInt()) : '—', isPositive: true),
+                  const Divider(height: 16),
                   _buildSalaryRow('Số giờ làm việc được phân công', _assignedHours > 0 ? '${_assignedHours.toStringAsFixed(1)} giờ' : '—'),
                   const Divider(height: 16),
                   _buildSalaryRow('Số ca làm việc được phân công', _assignedShiftCount > 0 ? '$_assignedShiftCount ca' : '—'),
@@ -423,11 +434,6 @@ class _SalaryScreenState extends State<SalaryScreen> {
                             Text(
                               'Chưa có dữ liệu chấm công',
                               style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              'Dữ liệu ca làm sẽ hiện khi API chấm công sẵn sàng',
-                              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                             ),
                           ],
                         ),
@@ -494,28 +500,6 @@ class _SalaryScreenState extends State<SalaryScreen> {
               ),
             ),
             const SizedBox(height: 24),
-
-            // Khiếu nại phiếu lương
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  _showSupportSheet();
-                },
-                icon: const FaIcon(FontAwesomeIcons.triangleExclamation, size: 18),
-                label: const Text(
-                  'Khiếu nại phiếu lương',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.error,
-                  side: BorderSide(color: AppColors.error.withValues(alpha: 0.4)),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
           ],
         ),
       ),
@@ -536,7 +520,7 @@ class _SalaryScreenState extends State<SalaryScreen> {
 
   Widget _buildSalaryRow(String label, String amount, {bool isPositive = false, bool isNegative = false}) {
     Color amountColor = AppColors.textPrimary;
-    if (isPositive) amountColor = const Color(0xFF10B981);
+    if (isPositive) amountColor = AppColors.successGreen;
     if (isNegative) amountColor = AppColors.error;
 
     return Row(
@@ -557,89 +541,6 @@ class _SalaryScreenState extends State<SalaryScreen> {
           ),
         ),
       ],
-    );
-  }
-
-  void _showSupportSheet() {
-    final descCtrl = TextEditingController();
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetCtx) => Padding(
-        padding: EdgeInsets.only(
-          left: 24.0,
-          right: 24.0,
-          top: 24.0,
-          bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 24.0,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text('Khiếu nại công / Lương', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            TextField(
-              controller: descCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Mô tả vấn đề',
-                hintText: 'Ví dụ: Ca ngày hôm qua bị ghi nhận trễ do lỗi mạng...',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () async {
-                final content = descCtrl.text.trim();
-                if (content.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Vui lòng nhập mô tả vấn đề')),
-                  );
-                  return;
-                }
-                final user = UserScope.currentUser(context);
-                final uid = user?.id ?? '';
-                if (uid.isEmpty) return;
-                try {
-                  await LeaveRepository().createRequest({
-                    'type': 'other',
-                    'title': 'Khiếu nại phiếu lương: $_selectedMonth',
-                    'content': content,
-                    'employeeId': uid,
-                  });
-                  if (sheetCtx.mounted) {
-                    Navigator.pop(sheetCtx);
-                  }
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      backgroundColor: AppColors.success,
-                      content: Text('✅ Đã gửi phản ánh tới phòng Nhân sự!'),
-                    ),
-                  );
-                } catch (e) {
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      backgroundColor: AppColors.error,
-                      content: Text('❌ Gửi phản ánh thất bại: $e'),
-                    ),
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              child: const Text('Gửi phản ánh', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
 
 class FaqItem {
@@ -16,7 +15,7 @@ class FaqHelpScreen extends StatelessWidget {
     FaqItem(
       question: 'Làm thế nào để chấm công Wi-Fi hợp lệ?',
       answer:
-          'Bạn cần kết nối điện thoại vào đúng mạng Wi-Fi của chi nhánh (VD: HRM_HN1_OFFICE). Khi vào tab Trang chủ, nút Chấm công sẽ chuyển sang trạng thái sẵn sàng. Chạm vào nút và chọn ca làm việc hôm nay để xác thực.',
+          'Bạn cần kết nối điện thoại vào mạng Wi-Fi của chi nhánh (VD: HRM_HN1_OFFICE). Khi bạn bấm nút Chấm công, ứng dụng đọc tên Wi-Fi (SSID) và mã mạng (BSSID) tại thời điểm đó rồi gửi kèm vào bản ghi chấm công. Lưu ý: hệ thống hiện chỉ GHI NHẬN thông tin Wi-Fi, chưa chặn chấm công khi Wi-Fi không khớp cấu hình chi nhánh.',
     ),
     FaqItem(
       question: 'Tôi quên bấm check-in hoặc check-out thì phải làm sao?',
@@ -58,38 +57,6 @@ class FaqHelpScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: const Row(
-              children: [
-                CircleAvatar(
-                  radius: 22,
-                  backgroundColor: Color(0xFFEFF6FF),
-                  child: FaIcon(FontAwesomeIcons.headset, color: Color(0xFF2563EB), size: 24),
-                ),
-                SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Trung tâm trợ giúp HRM', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                      SizedBox(height: 2),
-                      Text('Tổng hợp các giải đáp nhanh về vận hành, chấm công và quyền lợi nhân sự.', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text('Các câu hỏi phổ biến', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-          const SizedBox(height: 10),
-
           ..._faqs.map((faq) => _buildFaqCard(faq)),
         ],
       ),

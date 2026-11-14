@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
 import '../attendance/attendance_repository.dart';
-import '../attendance/adjustment.dart';
 import 'schedule.dart';
 import 'shift_form.dart';
 
@@ -65,17 +65,12 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
   }
 
   void _navigateToForm(ShiftActionType type) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ShiftActionFormScreen(
-          shift: widget.shift,
-          date: widget.date,
-          dayOfWeek: widget.dayOfWeek,
-          actionType: type,
-        ),
-      ),
-    );
+    context.push('/schedule/form', extra: {
+      'shift': widget.shift,
+      'date': widget.date,
+      'dayOfWeek': widget.dayOfWeek,
+      'actionType': type,
+    });
   }
 
   @override
@@ -106,7 +101,6 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
 
     final user = UserScope.currentUser(context);
     final bool isHourly = user?.isHourlySalary ?? true;
-    final double? hourlySalary = user?.hourlySalary;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -251,7 +245,7 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
                       FontAwesomeIcons.moneyBillWave,
                       'Cơ chế tính lương',
                       isHourly
-                          ? 'Theo giờ (${hourlySalary != null && hourlySalary > 0 ? _formatCurrency(hourlySalary) : '—'} ₫/h)'
+                          ? 'Theo giờ'
                           : 'Lương cơ bản tháng',
                     ),
                     _divider(),
@@ -312,10 +306,7 @@ class _ShiftDetailScreenState extends State<ShiftDetailScreen> {
                 color: Colors.orange.shade700,
                 bgColor: Colors.orange.shade50,
                 onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const AttendanceAdjustmentScreen()),
-                  );
+                  context.push('/attendance/adjustment');
                 },
               ),
             ] else ...[

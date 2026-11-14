@@ -1,4 +1,3 @@
-import '../../core/models/branch.dart';
 import '../../core/models/device_session.dart';
 import '../../core/models/user.dart';
 import '../../core/network/api_client.dart';
@@ -6,7 +5,7 @@ import '../profile/employee_repository.dart';
 
 /// Tầng data cho Auth: gọi API thật qua api-gateway về identity-service.
 ///
-/// - Đăng nhập: `POST /api/auth/login` (server set cookie `hrm-session`).
+/// - Đăng nhập: `POST /api/auth/login` (chỉ dùng `Authorization: Bearer`).
 /// - Kiểm tra phiên: `GET /api/auth/me`.
 /// - Đăng xuất: `POST /api/auth/logout`.
 /// - Đổi mật khẩu: `POST /api/auth/change-password`.
@@ -16,37 +15,45 @@ class AuthRepository {
   final ApiClient api;
   AuthRepository({ApiClient? api}) : api = api ?? ApiClient();
 
+  /// `toSafeUser` chỉ trả id, employeeId, email, name, systemRole, role,
+  /// branchId. `systemRole` là quyền quyết định vai trò, `role` chỉ là fallback.
   UserModel _toUser(Map<String, dynamic> j) {
-    final slug = j['branchSlug']?.toString() ?? j['branch']?.toString() ?? '';
-    final branch = slug.isNotEmpty ? branchById(slug) : null;
-    final branchSlug = branch?.slug ?? (slug.isNotEmpty ? slug : null);
     return UserModel(
       id: j['id']?.toString() ?? '',
+      employeeId: j['employeeId']?.toString(),
       name: j['name']?.toString() ?? '',
       email: j['email']?.toString() ?? '',
-      phone: j['phone']?.toString() ?? '',
-      role: j['role']?.toString() ?? 'staff',
-      roleTitle: j['roleTitle']?.toString() ?? '',
-      assignedBranchId: branchSlug,
-      branchSlug: branchSlug,
-      gender: j['gender']?.toString() ?? '',
-      birthDate: j['birthDate']?.toString() ?? '',
-      province: j['province']?.toString() ?? '',
-      ward: j['ward']?.toString() ?? '',
-      street: j['street']?.toString() ?? '',
-      cccd: j['cccd']?.toString() ?? '',
-      issueDate: j['issueDate']?.toString() ?? '',
-      issuePlace: j['issuePlace']?.toString() ?? '',
-      salaryType: j['salaryType']?.toString() ?? 'hourly',
-      hourlySalary: (j['hourlySalary'] as num?)?.toDouble() ?? 0.0,
-      baseSalary: (j['baseSalary'] as num?)?.toDouble() ?? 0.0,
-      bankName: j['bankName']?.toString() ?? '',
-      bankAccountNumber: j['bankAccountNumber']?.toString() ?? '',
-      bankAccountName: j['bankAccountName']?.toString() ?? '',
-      avatarUrl: j['avatarUrl']?.toString() ?? j['avatar']?.toString(),
-      cccdFrontUrl: j['cccdFrontUrl']?.toString() ?? j['cccdFront']?.toString(),
-      cccdBackUrl: j['cccdBackUrl']?.toString() ?? j['cccdBack']?.toString(),
+      role: j['systemRole']?.toString() ?? j['role']?.toString() ?? 'staff',
+      assignedBranchId: j['branchId']?.toString(),
     );
+  }
+
+  /// Hồ sơ chi tiết (địa chỉ, CCCD, ngân hàng) lấy từ organization-service
+  /// theo **employeeId** — truyền id tài khoản vào đây sẽ bị backend chặn 403.
+  Future<UserModel> _withEmployeeProfile(UserModel userModel) async {
+    final employeeId = userModel.employeeId;
+    if (employeeId == null || employeeId.isEmpty) return userModel;
+    try {
+      final profile = await EmployeeRepository(api: api).getEmployee(employeeId);
+      if (profile == null) return userModel;
+      return userModel.copyWith(
+        gender: profile['gender']?.toString(),
+        birthDate: profile['birthDate']?.toString(),
+        province: profile['province']?.toString(),
+        ward: profile['ward']?.toString(),
+        street: profile['street']?.toString(),
+        cccd: profile['cccd']?.toString(),
+        issueDate: profile['issueDate']?.toString(),
+        issuePlace: profile['issuePlace']?.toString(),
+        salaryType: profile['salaryType']?.toString(),
+        cccdBackUrl: profile['cccdBack']?.toString(),
+        bankName: profile['bankName']?.toString(),
+        bankAccountNumber: profile['bankAccountNumber']?.toString(),
+        bankAccountName: profile['bankAccountName']?.toString(),
+      );
+    } catch (_) {
+      return userModel;
+    }
   }
 
   /// Đăng nhập bằng email + mật khẩu, trả về user từ server.
@@ -60,6 +67,7 @@ class AuthRepository {
       api.setSession(
         accessToken: data['accessToken']?.toString(),
         refreshToken: data['refreshToken']?.toString(),
+        deviceSessionId: data['deviceSessionId']?.toString(),
       );
     }
     await ApiClient.persistSession(remember: rememberMe);
@@ -68,33 +76,7 @@ class AuthRepository {
       await EmployeeRepository(api: api).getBranches();
     } catch (_) {}
     final user = (data as Map)['user'] as Map<String, dynamic>;
-    var userModel = _toUser(user);
-    // Đồng bộ hồ sơ chi tiết (avatar, CCCD, thông tin ngân hàng) từ organization-service
-    if (userModel.id.isNotEmpty) {
-      try {
-        final profile = await EmployeeRepository(api: api).getEmployee(userModel.id);
-        if (profile != null) {
-          userModel = userModel.copyWith(
-            avatarUrl: profile['avatar']?.toString() ?? userModel.avatarUrl,
-            phone: profile['phone']?.toString() ?? userModel.phone,
-            gender: profile['gender']?.toString() ?? userModel.gender,
-            birthDate: profile['birthDate']?.toString() ?? userModel.birthDate,
-            province: profile['province']?.toString() ?? userModel.province,
-            ward: profile['ward']?.toString() ?? userModel.ward,
-            street: profile['street']?.toString() ?? userModel.street,
-            cccd: profile['cccd']?.toString() ?? userModel.cccd,
-            issueDate: profile['issueDate']?.toString() ?? userModel.issueDate,
-            issuePlace: profile['issuePlace']?.toString() ?? userModel.issuePlace,
-            cccdFrontUrl: profile['cccdFront']?.toString() ?? userModel.cccdFrontUrl,
-            cccdBackUrl: profile['cccdBack']?.toString() ?? userModel.cccdBackUrl,
-            bankName: profile['bankName']?.toString() ?? userModel.bankName,
-            bankAccountNumber: profile['bankAccountNumber']?.toString() ?? userModel.bankAccountNumber,
-            bankAccountName: profile['bankAccountName']?.toString() ?? userModel.bankAccountName,
-          );
-        }
-      } catch (_) {}
-    }
-    return userModel;
+    return _withEmployeeProfile(_toUser(user));
   }
 
   /// Lấy phiên hiện tại. Trả về null khi chưa/chưa còn đăng nhập.
@@ -105,33 +87,7 @@ class AuthRepository {
       try {
         await EmployeeRepository(api: api).getBranches();
       } catch (_) {}
-      var userModel = _toUser((data as Map).cast<String, dynamic>());
-      // Đồng bộ hồ sơ chi tiết (avatar, CCCD, thông tin ngân hàng) từ organization-service
-      if (userModel.id.isNotEmpty) {
-        try {
-          final profile = await EmployeeRepository(api: api).getEmployee(userModel.id);
-          if (profile != null) {
-            userModel = userModel.copyWith(
-              avatarUrl: profile['avatar']?.toString() ?? userModel.avatarUrl,
-              phone: profile['phone']?.toString() ?? userModel.phone,
-              gender: profile['gender']?.toString() ?? userModel.gender,
-              birthDate: profile['birthDate']?.toString() ?? userModel.birthDate,
-              province: profile['province']?.toString() ?? userModel.province,
-              ward: profile['ward']?.toString() ?? userModel.ward,
-              street: profile['street']?.toString() ?? userModel.street,
-              cccd: profile['cccd']?.toString() ?? userModel.cccd,
-              issueDate: profile['issueDate']?.toString() ?? userModel.issueDate,
-              issuePlace: profile['issuePlace']?.toString() ?? userModel.issuePlace,
-              cccdFrontUrl: profile['cccdFront']?.toString() ?? userModel.cccdFrontUrl,
-              cccdBackUrl: profile['cccdBack']?.toString() ?? userModel.cccdBackUrl,
-              bankName: profile['bankName']?.toString() ?? userModel.bankName,
-              bankAccountNumber: profile['bankAccountNumber']?.toString() ?? userModel.bankAccountNumber,
-              bankAccountName: profile['bankAccountName']?.toString() ?? userModel.bankAccountName,
-            );
-          }
-        } catch (_) {}
-      }
-      return userModel;
+      return await _withEmployeeProfile(_toUser((data as Map).cast<String, dynamic>()));
     } on ApiException {
       return null;
     }
@@ -139,7 +95,10 @@ class AuthRepository {
 
   Future<void> logout() async {
     try {
-      await api.postJson('/api/auth/logout', {});
+      // Gửi refresh token để backend thu hồi phiên thật.
+      await api.postJson('/api/auth/logout', {
+        'refreshToken': ApiClient.currentRefreshToken ?? '',
+      });
     } on ApiException {
       // Mất mạng vẫn cho đăng xuất cục bộ để không kẹt phiên.
     }
@@ -180,5 +139,3 @@ class AuthRepository {
     await api.delete('/api/auth/devices/$deviceId');
   }
 }
-
-

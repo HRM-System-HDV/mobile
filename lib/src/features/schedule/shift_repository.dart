@@ -1,65 +1,94 @@
+import '../../core/models/attendance.dart';
 import '../../core/network/api_client.dart';
 import '../../core/utils/date_format.dart';
 
+/// Ngày gửi backend phải là YYYY-MM-DD (work-service từ chối DD/MM/YYYY).
+String toIsoDate(String? raw) {
+  final d = parseVnDate(raw);
+  if (d == null) return raw?.trim() ?? '';
+  final mm = d.month.toString().padLeft(2, '0');
+  final dd = d.day.toString().padLeft(2, '0');
+  return '${d.year}-$mm-$dd';
+}
+
+/// Ca làm việc — đúng bản ghi `shifts` mà work-service trả về, cộng phần chấm
+/// công do `shiftProjection` gắn thêm (`attendance`, `attendanceState`,
+/// `canCheckout`).
+///
+/// `status` là vòng đời của ca: "đang làm" | "đã hủy" (không còn
+/// `isRecurring`). Kết quả chấm công nằm ở `attendance.status`.
 class ApiShiftModel {
   final String id;
   final String? employeeId;
-  final String? branchSlug;
-  final String date;
-  final String template;
+
+  /// `shifts` không có cột chi nhánh; branchId chỉ có trên đăng ký/nguyện vọng.
+  final String? branchId;
+
+  /// Ngày làm việc, định dạng YYYY-MM-DD.
+  final String workDate;
+  final String templateId;
   final String scheduledStart;
   final String scheduledEnd;
   final String status;
   final String? note;
-  final String? checkIn;
-  final String? checkOut;
-  final bool isRecurring;
+  final AttendanceModel? attendance;
+
+  /// not_started | working | completed | missed_checkin | missed_checkout
+  final String attendanceState;
+
+  /// Backend đã tính cửa sổ check-out: UI chỉ được cho ra ca khi cờ này true.
+  final bool canCheckout;
 
   const ApiShiftModel({
     required this.id,
     this.employeeId,
-    this.branchSlug,
-    required this.date,
-    required this.template,
+    this.branchId,
+    required this.workDate,
+    required this.templateId,
     required this.scheduledStart,
     required this.scheduledEnd,
-    this.status = 'scheduled',
+    this.status = 'đang làm',
     this.note,
-    this.checkIn,
-    this.checkOut,
-    this.isRecurring = false,
+    this.attendance,
+    this.attendanceState = 'not_started',
+    this.canCheckout = false,
   });
 
-  factory ApiShiftModel.fromJson(Map<String, dynamic> j) => ApiShiftModel(
-        id: j['id']?.toString() ?? '',
-        employeeId: j['employeeId']?.toString(),
-        branchSlug: j['branchSlug']?.toString(),
-        date: j['date']?.toString() ?? '',
-        // Cột này nullable trong DB; không điền giờ giả để tránh tính sai công/lương.
-        template: j['template']?.toString() ?? '',
-        scheduledStart: j['scheduledStart']?.toString() ?? '',
-        scheduledEnd: j['scheduledEnd']?.toString() ?? '',
-        status: j['status']?.toString() ?? 'scheduled',
-        note: j['note']?.toString(),
-        checkIn: j['checkIn']?.toString(),
-        checkOut: j['checkOut']?.toString(),
-        isRecurring: j['isRecurring'] == true,
-      );
+  factory ApiShiftModel.fromJson(Map<String, dynamic> j) {
+    final rawAttendance = j['attendance'];
+    return ApiShiftModel(
+      id: j['id']?.toString() ?? '',
+      employeeId: j['employeeId']?.toString(),
+      branchId: j['branchId']?.toString(),
+      workDate: j['workDate']?.toString() ?? '',
+      templateId: j['templateId']?.toString() ?? '',
+      scheduledStart: j['scheduledStart']?.toString() ?? '',
+      scheduledEnd: j['scheduledEnd']?.toString() ?? '',
+      status: j['status']?.toString() ?? 'đang làm',
+      note: j['note']?.toString(),
+      attendance: rawAttendance is Map<String, dynamic>
+          ? AttendanceModel.fromJson(rawAttendance)
+          : null,
+      attendanceState: j['attendanceState']?.toString() ?? 'not_started',
+      canCheckout: j['canCheckout'] == true,
+    );
+  }
+
+  /// Giờ vào/ra thực tế thuộc bản ghi chấm công, không phải cột của ca.
+  String? get checkIn => attendance?.checkIn;
+  String? get checkOut => attendance?.checkOut;
+  bool get isCancelled => status == 'đã hủy';
 
   String get timeLabel =>
       (scheduledStart.isEmpty || scheduledEnd.isEmpty) ? '—' : '$scheduledStart - $scheduledEnd';
 
-  String get displayTemplate => template.isEmpty ? '—' : template;
-
+  /// Chỉ chứa các khóa mà createShift/updateShift chấp nhận.
   Map<String, dynamic> toJson() => {
         if (employeeId != null) 'employeeId': employeeId,
-        if (branchSlug != null) 'branchSlug': branchSlug,
-        'date': toVnDate(date),
-        'template': template,
-        'scheduledStart': scheduledStart,
-        'scheduledEnd': scheduledEnd,
-        'status': status,
+        if (templateId.isNotEmpty) 'templateId': templateId,
+        if (workDate.isNotEmpty) 'workDate': toIsoDate(workDate),
         if (note != null) 'note': note,
+        if (status.isNotEmpty) 'status': status,
       };
 }
 
@@ -68,15 +97,18 @@ class ShiftRepository {
   final ApiClient api;
   ShiftRepository({ApiClient? api}) : api = api ?? ApiClient();
 
+  /// `workDate` YYYY-MM-DD, `month` YYYY-MM; lọc theo chi nhánh dùng `branchId`.
   Future<List<ApiShiftModel>> getShifts({
-    String? branchSlug,
+    String? branchId,
     String? employeeId,
-    String? date,
+    String? workDate,
+    String? month,
   }) async {
     final query = <String, String>{};
-    if (branchSlug != null && branchSlug.isNotEmpty) query['branchSlug'] = branchSlug;
+    if (branchId != null && branchId.isNotEmpty) query['branchId'] = branchId;
     if (employeeId != null && employeeId.isNotEmpty) query['employeeId'] = employeeId;
-    if (date != null && date.isNotEmpty) query['date'] = toVnDate(date);
+    if (workDate != null && workDate.isNotEmpty) query['workDate'] = toIsoDate(workDate);
+    if (month != null && month.isNotEmpty) query['month'] = month;
 
     final data = await api.getJson('/api/shifts', query: query);
     final List list = data is List ? data : [];
@@ -86,14 +118,40 @@ class ShiftRepository {
         .toList();
   }
 
-  Future<ApiShiftModel> createShift(Map<String, dynamic> payload) async {
-    final res = await api.postJson('/api/shifts', payload);
-    final Map<String, dynamic> map = res is Map<String, dynamic> ? res : {};
-    return ApiShiftModel.fromJson(map);
+  /// Backend tự suy ra scheduledStart/End từ ca mẫu và tự đặt trạng thái, nên
+  /// body tạo ca chỉ có employeeId, templateId, workDate, note.
+  Future<ApiShiftModel> createShift({
+    required String employeeId,
+    required String templateId,
+    required String workDate,
+    String? note,
+  }) async {
+    final res = await api.postJson('/api/shifts', {
+      'employeeId': employeeId,
+      'templateId': templateId,
+      'workDate': toIsoDate(workDate),
+      if (note != null) 'note': note,
+    });
+    return ApiShiftModel.fromJson(res is Map<String, dynamic> ? res : const {});
   }
 
-  Future<void> updateShift(String id, Map<String, dynamic> payload) async {
-    await api.putJson('/api/shifts/$id', payload);
+  /// `status` chỉ nhận "đang làm" | "đã hủy"; backend chặn sửa ca đã tới giờ
+  /// hoặc đã có chấm công.
+  Future<void> updateShift(
+    String id, {
+    String? employeeId,
+    String? templateId,
+    String? workDate,
+    String? note,
+    String? status,
+  }) async {
+    await api.putJson('/api/shifts/$id', {
+      if (employeeId != null) 'employeeId': employeeId,
+      if (templateId != null) 'templateId': templateId,
+      if (workDate != null) 'workDate': toIsoDate(workDate),
+      if (note != null) 'note': note,
+      if (status != null) 'status': status,
+    });
   }
 
   Future<void> deleteShift(String id) async {
@@ -104,50 +162,38 @@ class ShiftRepository {
     await api.postJson('/api/shifts/$id/assign', {'employeeId': employeeId});
   }
 
+  /// Nguyện vọng theo ngày: backend lưu `shiftRegistrations` với
+  /// employeeId + templateId + registerDate.
   Future<void> registerShift({
     required String employeeId,
-    required String shiftId,
-    String? preference,
-    String? branchSlug,
+    required String templateId,
+    required String registerDate,
   }) async {
-    // Ngày đăng ký gửi backend luôn ở dạng DD/MM/YYYY.
-    final pref = preference == null ? null : toVnDate(preference);
     await api.postJson('/api/shifts/register', {
       'employeeId': employeeId,
-      'shiftId': shiftId,
-      if (branchSlug != null && branchSlug.isNotEmpty) 'branchSlug': branchSlug,
-      if (pref != null) 'preference': pref,
-      if (pref != null) 'week': pref,
-      if (pref != null) 'day': pref,
-      if (pref != null) 'wish': pref,
+      'templateId': templateId,
+      'registerDate': toIsoDate(registerDate),
     });
   }
 
-  Future<void> unregisterShift({
-    required String employeeId,
-    required String shiftId,
-    String? preference,
-  }) async {
-    // Ngày đăng ký gửi backend luôn ở dạng DD/MM/YYYY.
-    final pref = preference == null ? null : toVnDate(preference);
-    await api.postJson('/api/shifts/unregister', {
-      'employeeId': employeeId,
-      'shiftId': shiftId,
-      if (pref != null) 'preference': pref,
-      if (pref != null) 'week': pref,
-      if (pref != null) 'day': pref,
-      if (pref != null) 'wish': pref,
-    });
-  }
-
+  /// Hủy nguyện vọng là DELETE theo id đăng ký; không có endpoint
+  /// POST /api/shifts/unregister.
   Future<void> deleteRegistration(String id) async {
     await api.delete('/api/shifts/registrations/$id');
   }
 
-  Future<List<Map<String, dynamic>>> getRegistrations({String? employeeId, String? branchSlug}) async {
+  /// `registerDate` YYYY-MM-DD; lọc chi nhánh dùng `branchId`.
+  Future<List<Map<String, dynamic>>> getRegistrations({
+    String? employeeId,
+    String? branchId,
+    String? registerDate,
+  }) async {
     final query = <String, String>{};
     if (employeeId != null && employeeId.isNotEmpty) query['employeeId'] = employeeId;
-    if (branchSlug != null && branchSlug.isNotEmpty) query['branchSlug'] = branchSlug;
+    if (branchId != null && branchId.isNotEmpty) query['branchId'] = branchId;
+    if (registerDate != null && registerDate.isNotEmpty) {
+      query['registerDate'] = toIsoDate(registerDate);
+    }
     final data = await api.getJson('/api/shifts/registrations', query: query);
     final List list = data is List ? data : [];
     return list.whereType<Map<String, dynamic>>().toList();

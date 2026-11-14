@@ -88,4 +88,16 @@ void main() {
 
     expect(store, isEmpty);
   });
+
+  // Mobile chỉ lưu token (Bearer); không có chỗ nào cho cookie hrm-session.
+  test('chỉ lưu access/refresh/deviceSession, không lưu cookie', () async {
+    ApiClient().setSession(
+      accessToken: 'access-abc',
+      refreshToken: 'refresh-xyz',
+      deviceSessionId: 'device-1',
+    );
+    await ApiClient.persistSession(remember: true);
+
+    expect(store.keys.toSet(), {accessKey, refreshKey, 'hrm.deviceSessionId'});
+  });
 }

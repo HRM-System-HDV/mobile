@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
+import '../../core/services/notification_service.dart';
 import '../../core/state/branch_scope.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
@@ -100,6 +104,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   late List<NotificationItem> _notifications;
   String? _loadedUserId;
   String? _loadError;
+  Timer? _pollTimer;
+  final Set<String> _knownIds = {};
+  bool _firstLoadDone = false;
 
   @override
   void initState() {
@@ -107,6 +114,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     // Chỉ dùng API thật; khởi rỗng để hiện empty state khi API chưa về/rỗng.
     _notifications = [];
     _syncUnreadCount();
+    // Quét thông báo mới định kỳ để bắn cảnh báo local (âm thanh/rung theo cài đặt).
+    _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) _fetchNotifications();
+    });
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -115,14 +132,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final uid = UserScope.currentUser(context)?.id ?? '';
     if (_loadedUserId != uid) {
       _loadedUserId = uid;
+      _firstLoadDone = false;
+      _knownIds.clear();
+      NotificationSettingsCache.refresh(userId: uid.isEmpty ? null : uid);
       _fetchNotifications();
     }
-  }
-
-  /// Thông báo gửi đích danh chỉ hiện khi lọc theo đúng nhân sự đang đăng nhập.
-  String? get _employeeId {
-    final uid = UserScope.currentUser(context)?.id ?? '';
-    return uid.isEmpty ? null : uid;
   }
 
   String? _rawString(Map<String, dynamic> raw, List<String> keys) {
@@ -135,37 +149,20 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Future<void> _fetchNotifications() async {
     try {
-      final employeeId = _employeeId;
-      final list = await _repo.getNotifications(employeeId: employeeId);
-      // Đọc raw để giữ các trường mở rộng (requestType/sender/shift*) nếu API có.
-      Map<String, Map<String, dynamic>> rawById = {};
-      try {
-        final raw = await _repo.api.getJson('/api/notifications', query: {
-          if (employeeId != null) 'employeeId': employeeId,
-        });
-        if (raw is List) {
-          for (final e in raw.whereType<Map>()) {
-            final m = e.cast<String, dynamic>();
-            final id = m['id']?.toString() ?? '';
-            if (id.isNotEmpty) rawById[id] = m;
-          }
-        }
-      } catch (_) {}
+      final list = await _repo.getNotifications();
       if (mounted) {
         final remoteItems = list.map((m) {
-          final raw = rawById[m.id] ?? const <String, dynamic>{};
-          final meta = raw['metadata'];
-          final Map<String, dynamic> metaMap =
-              meta is Map ? meta.cast<String, dynamic>() : const <String, dynamic>{};
+          final metaMap = m.metadata ?? const <String, dynamic>{};
 
           // Chỉ nhận loại yêu cầu do backend gắn tường minh. Không suy đoán từ
           // title/body: thông báo duyệt đơn cũng chứa chữ "làm thay/đổi ca" nên
           // suy đoán sẽ biến chúng thành thẻ phản hồi ca sai.
-          String? requestType = _rawString({...raw, ...metaMap}, [
-            'requestType',
-            'request_type',
-            'shiftRequestType',
-          ]);
+          String? requestType = m.requestType ??
+              _rawString(metaMap, [
+                'requestType',
+                'request_type',
+                'shiftRequestType',
+              ]);
           if (requestType != null) {
             final v = requestType.toLowerCase();
             if (v.contains('swap')) {
@@ -177,11 +174,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             }
           }
 
-          // id đơn từ thật nằm trong metadata; thiếu nó thì không mở màn phản hồi.
+          // BE để id đơn ở CỘT `Notification.requestId` (con trỏ điều hướng có kiểu),
+          // metadata chỉ còn là đường cũ; đọc cột trước để bấm thông báo thật mở được đơn.
           final String? requestId =
-              _rawString({...raw, ...metaMap}, ['requestId', 'request_id']);
+              m.requestId ?? _rawString(metaMap, ['requestId', 'request_id']);
           final String? statusRaw = _rawString(
-            {...raw, ...metaMap},
+            metaMap,
             ['requestStatus', 'request_status'],
           )?.toLowerCase();
           ShiftRequestStatus requestStatus = ShiftRequestStatus.pending;
@@ -214,22 +212,22 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             requestId: requestId,
             requestStatus: requestStatus,
             requestType: requestType,
-            senderName: _rawString({...raw, ...metaMap}, ['senderName', 'sender', 'employeeName']),
-            senderRole: _rawString({...raw, ...metaMap}, ['senderRole', 'role']),
-            senderPhone: _rawString({...raw, ...metaMap}, ['senderPhone', 'phone']),
-            shiftName: _rawString({...raw, ...metaMap}, ['shiftName', 'shift']),
-            shiftTime: _rawString({...raw, ...metaMap}, ['shiftTime', 'time']),
-            shiftHours: _rawString({...raw, ...metaMap}, ['shiftHours', 'hours']),
-            shiftDate: _rawString({...raw, ...metaMap}, ['shiftDate', 'date']),
-            branch: _rawString({...raw, ...metaMap}, ['branch', 'branchSlug']),
-            shiftRole: _rawString({...raw, ...metaMap}, ['shiftRole']),
-            swapShiftName: _rawString({...raw, ...metaMap}, ['swapShiftName']),
-            swapShiftTime: _rawString({...raw, ...metaMap}, ['swapShiftTime']),
-            swapShiftHours: _rawString({...raw, ...metaMap}, ['swapShiftHours']),
-            swapShiftDate: _rawString({...raw, ...metaMap}, ['swapShiftDate']),
-            swapShiftBranch: _rawString({...raw, ...metaMap}, ['swapShiftBranch']),
-            swapShiftRole: _rawString({...raw, ...metaMap}, ['swapShiftRole']),
-            reason: _rawString({...raw, ...metaMap}, ['reason']) ?? m.body,
+            senderName: m.senderName ?? _rawString(metaMap, ['senderName', 'sender', 'employeeName']),
+            senderRole: m.senderRole ?? _rawString(metaMap, ['senderRole', 'role']),
+            senderPhone: m.senderPhone ?? _rawString(metaMap, ['senderPhone', 'phone']),
+            shiftName: m.shiftName ?? _rawString(metaMap, ['shiftName', 'shift']),
+            shiftTime: m.shiftTime ?? _rawString(metaMap, ['shiftTime', 'time']),
+            shiftHours: m.shiftHours ?? _rawString(metaMap, ['shiftHours', 'hours']),
+            shiftDate: m.shiftDate ?? _rawString(metaMap, ['shiftDate', 'date']),
+            branch: m.branchId ?? _rawString(metaMap, ['branch']),
+            shiftRole: _rawString(metaMap, ['shiftRole']),
+            swapShiftName: _rawString(metaMap, ['swapShiftName']),
+            swapShiftTime: _rawString(metaMap, ['swapShiftTime']),
+            swapShiftHours: _rawString(metaMap, ['swapShiftHours']),
+            swapShiftDate: _rawString(metaMap, ['swapShiftDate']),
+            swapShiftBranch: _rawString(metaMap, ['swapShiftBranch']),
+            swapShiftRole: _rawString(metaMap, ['swapShiftRole']),
+            reason: _rawString(metaMap, ['reason']) ?? m.body,
           );
         }).toList();
         setState(() {
@@ -237,6 +235,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           _loadError = null;
         });
         _syncUnreadCount();
+        _alertNewItems(remoteItems);
       }
     } catch (e) {
       // Không hiện "đã dọn sạch" khi thực chất là gọi API thất bại.
@@ -247,6 +246,31 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   void _syncUnreadCount() {
     final count = _notifications.where((n) => !n.isRead).length;
     NotificationState.updateCount(count);
+  }
+
+  /// Lần tải đầu chỉ ghi nhận danh sách; các lần sau bắn cảnh báo local cho
+  /// thông báo chưa đọc mới xuất hiện, theo đúng cài đặt người dùng.
+  void _alertNewItems(List<NotificationItem> items) {
+    final fresh = items.where((n) => !n.isRead && !_knownIds.contains(n.id)).toList();
+    _knownIds
+      ..clear()
+      ..addAll(items.map((n) => n.id));
+    if (!_firstLoadDone) {
+      _firstLoadDone = true;
+      return;
+    }
+    if (fresh.isEmpty || !NotificationSettingsCache.get('tabNotificationAlert')) return;
+    final sound = NotificationSettingsCache.get('soundEnabled');
+    final vibrate = NotificationSettingsCache.get('vibrateEnabled');
+    for (final item in fresh.take(3)) {
+      LocalNotifier.instance.show(
+        item.id.hashCode.abs() % 100000,
+        item.title,
+        item.content,
+        sound: sound,
+        vibrate: vibrate,
+      );
+    }
   }
 
   // ── Actions ─────────────────────────────────────────────────────────────────
@@ -266,21 +290,25 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _markAllAsRead() async {
-    final unread = _notifications.where((n) => !n.isRead).toList();
+    final unread = _notifications.where((n) => !n.isRead).map((n) => n.id).toList();
     if (unread.isEmpty) return;
-    try {
-      await _repo.markAllRead();
-    } catch (e) {
-      _showError(_errorText(e));
-      return;
-    }
+    // Backend chỉ có PUT /api/notifications/:id/read nên phải gọi từng id.
+    final result = await _runPerId(unread, _repo.markRead);
     if (!mounted) return;
     setState(() {
       for (var item in _notifications) {
-        item.isRead = true;
+        if (result.done.contains(item.id)) {
+          item.isRead = true;
+        }
       }
     });
     _syncUnreadCount();
+    if (result.error != null) {
+      _showError(
+        'Chỉ đánh dấu đã đọc được ${result.done.length}/${unread.length} thông báo. ${_errorText(result.error!)}',
+      );
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         backgroundColor: Colors.green,
@@ -355,87 +383,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  void _deleteSelected() {
-    if (_selectedIds.isEmpty) return;
-    final count = _selectedIds.length;
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Xoá thông báo', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-        content: Text('Bạn có chắc chắn muốn xoá $count thông báo đã chọn?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Huỷ'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(dialogContext);
-              final ids = _selectedIds.toList();
-              final result = await _runPerId(ids, _repo.deleteNotification);
-              if (!mounted) return;
-              setState(() {
-                _notifications.removeWhere((n) => result.done.contains(n.id));
-                _isSelecting = false;
-                _selectedIds.clear();
-              });
-              _syncUnreadCount();
-              if (result.error != null) {
-                _showError(
-                  'Chỉ xoá được ${result.done.length}/${ids.length} thông báo. ${_errorText(result.error!)}',
-                );
-                return;
-              }
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  backgroundColor: AppColors.error,
-                  content: Text('🗑️ Đã xoá ${result.done.length} thông báo'),
-                  duration: const Duration(seconds: 2),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.error,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            child: const Text('Xoá'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _deleteSingle(NotificationItem item) async {
-    final index = _notifications.indexOf(item);
-    // Dismissible yêu cầu bỏ item khỏi danh sách ngay; trả lại chỗ cũ nếu API lỗi.
-    setState(() {
-      _notifications.remove(item);
-    });
-    _syncUnreadCount();
-    try {
-      await _repo.deleteNotification(item.id);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _notifications.insert(index.clamp(0, _notifications.length), item);
-      });
-      _syncUnreadCount();
-      _showError(_errorText(e));
-      return;
-    }
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: AppColors.textPrimary,
-        content: Text('🗑️ Đã xoá "${item.title}"'),
-        duration: const Duration(seconds: 3),
-      ),
-    );
-  }
-
   Future<void> _openRequestDetail(NotificationItem item) async {
     final requestId = item.requestId;
     if (requestId == null || requestId.isEmpty) {
@@ -452,38 +399,36 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
     if (!mounted) return;
 
-    final result = await Navigator.push<ShiftRequestStatus>(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ShiftRequestDetailScreen(
-          requestId: requestId,
-          title: item.title,
-          senderName: item.senderName ?? '—',
-          senderRole: item.senderRole ?? '',
-          senderPhone: item.senderPhone ?? '',
-          requestType: item.requestType ?? 'cover',
-          requestTime: item.time,
-          shiftName: item.shiftName ?? '—',
-          shiftTime: item.shiftTime ?? '—',
-          shiftHours: item.shiftHours ?? '',
-          shiftDate: item.shiftDate ?? '—',
-          branch: item.branch ?? BranchScope.label(context),
-          shiftRole: item.shiftRole ?? '',
-          swapShiftName: item.swapShiftName,
-          swapShiftTime: item.swapShiftTime,
-          swapShiftHours: item.swapShiftHours,
-          swapShiftDate: item.swapShiftDate,
-          swapShiftBranch: item.swapShiftBranch,
-          swapShiftRole: item.swapShiftRole,
-          reason: item.reason ?? item.content,
-          initialStatus: item.requestStatus,
-          onStatusChanged: (newStatus) {
-            setState(() {
-              item.requestStatus = newStatus;
-            });
-          },
-        ),
-      ),
+    final result = await context.push<ShiftRequestStatus>(
+      '/notifications/detail',
+      extra: {
+        'requestId': requestId,
+        'title': item.title,
+        'senderName': item.senderName ?? '—',
+        'senderRole': item.senderRole ?? '',
+        'senderPhone': item.senderPhone ?? '',
+        'requestType': item.requestType ?? 'cover',
+        'requestTime': item.time,
+        'shiftName': item.shiftName ?? '—',
+        'shiftTime': item.shiftTime ?? '—',
+        'shiftHours': item.shiftHours ?? '',
+        'shiftDate': item.shiftDate ?? '—',
+        'branch': item.branch ?? BranchScope.label(context),
+        'shiftRole': item.shiftRole ?? '',
+        'swapShiftName': item.swapShiftName,
+        'swapShiftTime': item.swapShiftTime,
+        'swapShiftHours': item.swapShiftHours,
+        'swapShiftDate': item.swapShiftDate,
+        'swapShiftBranch': item.swapShiftBranch,
+        'swapShiftRole': item.swapShiftRole,
+        'reason': item.reason ?? item.content,
+        'initialStatus': item.requestStatus,
+        'onStatusChanged': (ShiftRequestStatus newStatus) {
+          setState(() {
+            item.requestStatus = newStatus;
+          });
+        },
+      },
     );
 
     if (result != null) {
@@ -573,36 +518,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               ),
             ],
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _deleteSingle(item);
-                    },
-                    icon: const FaIcon(FontAwesomeIcons.trashCan, size: 18, color: AppColors.error),
-                    label: const Text('Xoá thông báo', style: TextStyle(color: AppColors.error)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: AppColors.error),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                  ),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () => Navigator.pop(context),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: Colors.grey.shade300),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: Colors.grey.shade300),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: const Text('Đóng', style: TextStyle(color: AppColors.textPrimary)),
-                  ),
-                ),
-              ],
+                child: const Text('Đóng', style: TextStyle(color: AppColors.textPrimary)),
+              ),
             ),
           ],
         ),
@@ -643,7 +569,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          _loadError != null ? 'Kéo xuống để thử lại.' : 'Tất cả thông báo đã được dọn sạch.',
+                          _loadError != null ? 'Kéo xuống để thử lại.' : 'Kéo xuống để tải thông báo mới nhất.',
                           style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                         ),
                       ],
@@ -770,21 +696,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ),
               ),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: count > 0 ? _deleteSelected : null,
-                icon: const FaIcon(FontAwesomeIcons.trashCan, size: 18),
-                label: Text('Xoá ($count)'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.error,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-              ),
-            ),
           ],
         ),
       ),
@@ -794,176 +705,142 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Widget _buildNotificationCard(NotificationItem item) {
     final isSelected = _selectedIds.contains(item.id);
 
-    return Dismissible(
-      key: Key(item.id),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
+    return InkWell(
+      onTap: () {
+        if (_isSelecting) {
+          setState(() {
+            if (isSelected) {
+              _selectedIds.remove(item.id);
+            } else {
+              _selectedIds.add(item.id);
+            }
+          });
+        } else {
+          if (item.isShiftRequest) {
+            _openRequestDetail(item);
+          } else {
+            _showNotificationDetail(item);
+          }
+        }
+      },
+      onLongPress: () {
+        if (!_isSelecting) {
+          setState(() {
+            _isSelecting = true;
+            _selectedIds.add(item.id);
+          });
+        }
+      },
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: AppColors.error,
+          color: item.isRead ? Colors.white : AppColors.primary.withValues(alpha: 0.04),
           borderRadius: BorderRadius.circular(14),
-        ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            FaIcon(FontAwesomeIcons.trashCan, color: Colors.white, size: 24),
-            SizedBox(width: 6),
-            Text('Xoá', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          border: Border.all(
+            color: isSelected
+                ? AppColors.primary
+                : (item.isRead ? Colors.grey.shade200 : AppColors.primary.withValues(alpha: 0.2)),
+            width: isSelected ? 1.5 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
           ],
         ),
-      ),
-      onDismissed: (_) => _deleteSingle(item),
-      child: InkWell(
-        onTap: () {
-          if (_isSelecting) {
-            setState(() {
-              if (isSelected) {
-                _selectedIds.remove(item.id);
-              } else {
-                _selectedIds.add(item.id);
-              }
-            });
-          } else {
-            if (item.isShiftRequest) {
-              _openRequestDetail(item);
-            } else {
-              _showNotificationDetail(item);
-            }
-          }
-        },
-        onLongPress: () {
-          if (!_isSelecting) {
-            setState(() {
-              _isSelecting = true;
-              _selectedIds.add(item.id);
-            });
-          }
-        },
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: item.isRead ? Colors.white : AppColors.primary.withValues(alpha: 0.04),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: isSelected
-                  ? AppColors.primary
-                  : (item.isRead ? Colors.grey.shade200 : AppColors.primary.withValues(alpha: 0.2)),
-              width: isSelected ? 1.5 : 1,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_isSelecting) ...[
+              Checkbox(
+                value: isSelected,
+                activeColor: AppColors.primary,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                onChanged: (val) {
+                  setState(() {
+                    if (val == true) {
+                      _selectedIds.add(item.id);
+                    } else {
+                      _selectedIds.remove(item.id);
+                    }
+                  });
+                },
+              ),
+              const SizedBox(width: 4),
+            ],
+            // Icon
+            CircleAvatar(
+              radius: 20,
+              backgroundColor: item.iconColor.withValues(alpha: 0.12),
+              child: FaIcon(item.icon, color: item.iconColor, size: 20),
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.03),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (_isSelecting) ...[
-                Checkbox(
-                  value: isSelected,
-                  activeColor: AppColors.primary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                  onChanged: (val) {
-                    setState(() {
-                      if (val == true) {
-                        _selectedIds.add(item.id);
-                      } else {
-                        _selectedIds.remove(item.id);
-                      }
-                    });
-                  },
-                ),
-                const SizedBox(width: 4),
-              ],
-              // Icon
-              CircleAvatar(
-                radius: 20,
-                backgroundColor: item.iconColor.withValues(alpha: 0.12),
-                child: FaIcon(item.icon, color: item.iconColor, size: 20),
-              ),
-              const SizedBox(width: 12),
+            const SizedBox(width: 12),
 
-              // Title, content, time
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            item.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontWeight: item.isRead ? FontWeight.w600 : FontWeight.bold,
-                              fontSize: 14,
-                              color: AppColors.textPrimary,
-                            ),
+            // Title, content, time
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: item.isRead ? FontWeight.w600 : FontWeight.bold,
+                            fontSize: 14,
+                            color: AppColors.textPrimary,
                           ),
                         ),
-                        if (!item.isRead) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: const BoxDecoration(
-                              color: AppColors.primary,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      item.content,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.35,
-                        color: item.isRead ? AppColors.textSecondary : const Color(0xFF333333),
                       ),
-                    ),
-
-                    const SizedBox(height: 6),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                              item.time,
-                              style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                            ),
-                            if (item.isShiftRequest) ...[
-                              const SizedBox(width: 8),
-                              _buildRequestStatusBadge(item.requestStatus),
-                            ],
-                          ],
-                        ),
-                        if (!_isSelecting)
-                          InkWell(
-                            onTap: () => _deleteSingle(item),
-                            borderRadius: BorderRadius.circular(6),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                              child: FaIcon(FontAwesomeIcons.trashCan, size: 16, color: Colors.grey.shade400),
-                            ),
+                      if (!item.isRead) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: AppColors.primary,
+                            shape: BoxShape.circle,
                           ),
+                        ),
                       ],
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    item.content,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      height: 1.35,
+                      color: item.isRead ? AppColors.textSecondary : AppColors.textPrimary,
                     ),
-                  ],
-                ),
+                  ),
+
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        item.time,
+                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                      ),
+                      if (item.isShiftRequest) ...[
+                        const SizedBox(width: 8),
+                        _buildRequestStatusBadge(item.requestStatus),
+                      ],
+                    ],
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

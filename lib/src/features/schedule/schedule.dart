@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
 import 'schedule_service.dart';
 import 'shift_repository.dart';
-import 'shift_detail.dart';
 
 export 'schedule_service.dart';
 
@@ -466,12 +466,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
           // Expanded Content (Div con hiển thị các ca làm việc của ngày đó)
           if (isExpanded) ...[
-            const Divider(height: 1, thickness: 1, color: Color(0xFFF1F5F9)),
+            const Divider(height: 1, thickness: 1, color: AppColors.border),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
               decoration: const BoxDecoration(
-                color: Color(0xFFF8FAFC),
+                color: AppColors.surfaceSubtle,
                 borderRadius: BorderRadius.vertical(bottom: Radius.circular(15)),
               ),
               child: dayModel.isOff
@@ -510,16 +510,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       ),
       child: InkWell(
         onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => ShiftDetailScreen(
-                shift: shift,
-                date: date,
-                dayOfWeek: dayOfWeek,
-              ),
-            ),
-          );
+          context.push('/schedule/detail', extra: {
+            'shift': shift,
+            'date': date,
+            'dayOfWeek': dayOfWeek,
+          });
         },
         borderRadius: BorderRadius.circular(12),
         child: Padding(

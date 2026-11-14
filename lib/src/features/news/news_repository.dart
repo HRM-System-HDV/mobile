@@ -3,43 +3,56 @@ import '../../core/network/api_client.dart';
 import 'news.dart';
 
 /// Repository bảng tin gọi qua api-gateway về integration-service (4005).
+///
+/// Hợp đồng ghi: `contentFields.news` = title, summary, content, publishDate,
+/// tag, pinned, branchId — gửi khóa nào ngoài danh sách này là 400.
 class NewsRepository {
   final ApiClient api;
   NewsRepository({ApiClient? api}) : api = api ?? ApiClient();
 
-  Color _mapToneToColor(String? tone) {
-    switch (tone) {
-      case 'danger':
+  /// Backend không lưu màu nhãn: màu suy từ chuyên mục theo đúng bảng màu màn hình tin.
+  Color _colorForTag(String tag) {
+    switch (tag) {
+      case 'Khẩn cấp':
+      case 'Nghỉ lễ':
         return Colors.red;
-      case 'warning':
+      case 'Khen thưởng':
         return Colors.orange;
-      case 'success':
+      case 'Vận hành':
         return Colors.green;
-      case 'primary':
-        return Colors.blue;
-      case 'gray':
       default:
-        return Colors.grey;
+        return Colors.blue;
     }
+  }
+
+  String _today() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}'
+        '-${now.day.toString().padLeft(2, '0')}';
+  }
+
+  NewsArticle _parse(Map<String, dynamic> j) {
+    final tag = j['tag']?.toString() ?? 'Thông báo';
+    final branchId = j['branchId']?.toString() ?? '';
+    final publishDate = j['publishDate']?.toString() ?? '';
+    return NewsArticle(
+      id: j['id']?.toString() ?? '',
+      title: j['title']?.toString() ?? '',
+      summary: j['summary']?.toString() ?? '',
+      content: j['content']?.toString() ?? '',
+      author: j['authorName']?.toString() ?? '',
+      date: publishDate,
+      tag: tag,
+      tagColor: _colorForTag(tag),
+      pinned: j['pinned'] == true,
+      branch: branchId.isEmpty ? 'Toàn công ty' : branchId,
+    );
   }
 
   Future<List<NewsArticle>> getNews() async {
     final data = await api.getJson('/api/news');
     final List list = data is List ? data : [];
-    return list.whereType<Map<String, dynamic>>().map((j) {
-      return NewsArticle(
-        id: j['id']?.toString() ?? '',
-        title: j['title']?.toString() ?? '',
-        summary: j['summary']?.toString() ?? '',
-        content: j['content']?.toString() ?? '',
-        author: j['author']?.toString() ?? '',
-        date: j['date']?.toString() ?? '',
-        tag: j['tag']?.toString() ?? 'Thông báo',
-        tagColor: _mapToneToColor(j['tagTone']?.toString()),
-        pinned: j['pinned'] == true,
-        branch: j['branch']?.toString() ?? 'Toàn công ty',
-      );
-    }).toList();
+    return list.whereType<Map<String, dynamic>>().map(_parse).toList();
   }
 
   Future<NewsArticle> createNews({
@@ -47,34 +60,25 @@ class NewsRepository {
     required String content,
     String? summary,
     String? tag,
-    String? tagTone,
+    String? publishDate,
     bool pinned = false,
-    String? branch,
-    String? author,
+    String? branchId,
   }) async {
-    final payload = {
+    final body = content.trim();
+    final summaryText = (summary != null && summary.isNotEmpty)
+        ? summary
+        : (body.length > 90 ? '${body.substring(0, 90)}...' : body);
+    final tagText = (tag != null && tag.isNotEmpty) ? tag : 'Thông báo';
+    final payload = <String, dynamic>{
       'title': title,
-      'content': content,
-      'summary': summary ?? (content.length > 90 ? '${content.substring(0, 90)}...' : content),
-      'tag': tag ?? 'Thông báo',
-      'tagTone': tagTone ?? 'primary',
+      'summary': summaryText,
+      'content': body,
+      'publishDate': (publishDate != null && publishDate.isNotEmpty) ? publishDate : _today(),
+      'tag': tagText,
       'pinned': pinned,
-      'branch': branch ?? 'Toàn công ty',
-      if (author != null && author.isNotEmpty) 'author': author,
+      if (branchId != null && branchId.isNotEmpty) 'branchId': branchId,
     };
     final data = await api.postJson('/api/news', payload);
-    final j = data is Map<String, dynamic> ? data : <String, dynamic>{};
-    return NewsArticle(
-      id: j['id']?.toString() ?? 'n-${DateTime.now().millisecondsSinceEpoch}',
-      title: j['title']?.toString() ?? title,
-      summary: j['summary']?.toString() ?? (summary ?? content),
-      content: j['content']?.toString() ?? content,
-      author: j['author']?.toString() ?? (author ?? ''),
-      date: j['date']?.toString() ?? '',
-      tag: j['tag']?.toString() ?? (tag ?? 'Thông báo'),
-      tagColor: _mapToneToColor(j['tagTone']?.toString() ?? tagTone),
-      pinned: j['pinned'] == true,
-      branch: j['branch']?.toString() ?? (branch ?? 'Toàn công ty'),
-    );
+    return _parse(data is Map<String, dynamic> ? data : const <String, dynamic>{});
   }
 }

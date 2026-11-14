@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
+import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
 import '../attendance/attendance_repository.dart';
-import '../attendance/adjustment.dart';
 import 'shift_repository.dart';
 import 'general.dart';
 
@@ -31,14 +32,26 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
   final StaffInShift staff;
   final GeneralShiftModel shift;
   final GeneralDayModel day;
+  /// Ngưỡng cho phép vào ca muộn (phút) đọc từ `GET /api/attendance/config`;
+  /// backend mặc định 0 (không có thời gian trễ).
   final int gracePeriodMinutes;
+
+  /// Cấu hình "Thời gian cho phép chốt ra" (phút) đọc từ
+  /// `GET /api/attendance/config`; backend mặc định 60 và 0 = tính năng tắt.
+  final int checkoutWindowMinutes;
+
+  /// Repository chấm công dùng cho hành động chốt ra ca bị bỏ qua. Cho phép
+  /// truyền từ outside (test); để null thì màn tự tạo repository thật.
+  final AttendanceRepository? attendance;
 
   const StaffGeneralShiftDetailScreen({
     super.key,
     required this.staff,
     required this.shift,
     required this.day,
-    this.gracePeriodMinutes = 5,
+    this.gracePeriodMinutes = 0,
+    this.checkoutWindowMinutes = 60,
+    this.attendance,
   });
 
   @override
@@ -46,6 +59,10 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
     final isNotYet = staff.checkInStatus == 'not_yet';
     final isCheckedIn = staff.checkInStatus == 'checked_in';
     final isInProgress = staff.checkInStatus == 'in_progress';
+
+    // Ca bị bỏ qua vì quên chốt ra: backend chiếu status 'missed' (đã check-in,
+    // chưa checkOut trong cửa sổ). checkOut vẫn null nên ca không được tính công.
+    final isSkipped = staff.isSkippedCheckout;
 
     // Quên chấm công: Chưa chấm công mà ngày đã qua, HOẶC hôm nay đã qua giờ bắt đầu ca
     final isForgot = isNotYet && (() {
@@ -85,7 +102,10 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
 
     String statusText;
     Color statusColor;
-    if (isCheckedIn) {
+    if (isSkipped) {
+      statusText = 'Bỏ qua ca';
+      statusColor = Colors.red.shade700;
+    } else if (isCheckedIn) {
       statusText = isLate ? 'Trễ' : 'Đúng giờ';
       statusColor = isLate ? Colors.orange.shade700 : AppColors.success;
     } else if (isInProgress) {
@@ -102,7 +122,9 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
     final checkIn = staff.checkInTime.isNotEmpty ? staff.checkInTime : 'Chưa chấm công';
     final checkOut = staff.checkOutTime.isNotEmpty
         ? staff.checkOutTime
-        : (isNotYet ? 'Chưa chấm công' : 'Chưa chấm công ra');
+        : (isSkipped
+            ? 'Quá hạn chốt ra (đã bỏ qua)'
+            : (isNotYet ? 'Chưa chấm công' : 'Chưa chấm công ra'));
     final worked = _workedHours(staff.checkInTime, staff.checkOutTime);
     final hours = worked == null
         ? '—'
@@ -282,7 +304,7 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
                 _divider(),
                 _buildInfoRow(FontAwesomeIcons.rightToBracket, 'Giờ check-in tính công', checkIn, valueColor: isForgot ? Colors.red.shade700 : null),
                 _divider(),
-                _buildInfoRow(FontAwesomeIcons.rightFromBracket, 'Giờ check-out tính công', checkOut, valueColor: isForgot ? Colors.red.shade700 : null),
+                _buildInfoRow(FontAwesomeIcons.rightFromBracket, 'Giờ check-out tính công', checkOut, valueColor: (isForgot || isSkipped) ? Colors.red.shade700 : null),
                 _divider(),
                 _buildInfoRow(FontAwesomeIcons.stopwatch, 'Số giờ tính công', hours),
                 _divider(),
@@ -296,7 +318,19 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
             if (showAdminActions) ...[
               const Text('Tùy chọn', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
               const SizedBox(height: 10),
-              if (isCheckedIn && !isLate) ...[
+              if (isSkipped) ...[
+                // Ca bị bỏ qua vì quên chốt ra: admin/manager chốt lại bằng CHÍNH
+                // hành động check-out thường (POST /api/attendance/checkout kèm
+                // shiftId của ca, không phải "chấm công hộ"). Backend tự áp quyền
+                // theo chi nhánh và trả message tiếng Việt khi bị từ chối (400/403).
+                _buildActionButton(
+                  title: 'Xác nhận Ra ca',
+                  icon: FontAwesomeIcons.rightFromBracket,
+                  color: AppColors.warningDark,
+                  bgColor: AppColors.warningDark.withValues(alpha: 0.08),
+                  onTap: () => _handleCheckOutSkipped(context),
+                ),
+              ] else if (isCheckedIn && !isLate) ...[
                 // Đúng giờ: Quản lý / Admin có quyền Hủy ca
                 _buildActionButton(
                   title: 'Hủy ca',
@@ -329,10 +363,7 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
                     icon: FontAwesomeIcons.calendarPlus,
                     color: Colors.orange.shade700,
                     bgColor: Colors.orange.shade50,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const AttendanceAdjustmentScreen()),
-                    ),
+                    onTap: () => context.push('/attendance/adjustment'),
                   ),
                 ],
               ],
@@ -345,13 +376,22 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
                 icon: FontAwesomeIcons.calendarPlus,
                 color: Colors.orange.shade700,
                 bgColor: Colors.orange.shade50,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AttendanceAdjustmentScreen()),
-                ),
+                onTap: () => context.push('/attendance/adjustment'),
               ),
             ],
-            if (isOwnShift && isCheckedIn && !isLate && !canManage) ...[
+            if (isOwnShift && isSkipped && !canManage) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.grey.shade200)),
+                child: const Row(children: [
+                  FaIcon(FontAwesomeIcons.circleExclamation, color: AppColors.errorDark),
+                  SizedBox(width: 12),
+                  Expanded(child: Text('Ca đã quá hạn chốt ra nên bị bỏ qua và không được tính công; bạn hãy liên hệ quản lý hoặc admin để chốt ca này.', style: TextStyle(fontSize: 13, color: AppColors.textSecondary))),
+                ]),
+              ),
+            ] else if (isOwnShift && isCheckedIn && !isLate && !canManage) ...[
               const SizedBox(height: 8),
               Container(
                 width: double.infinity,
@@ -388,9 +428,18 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
     );
     if (confirm != true || !context.mounted) return;
     try {
-      if (shift.id.isNotEmpty) {
-        await ShiftRepository().deleteShift(shift.id);
+      // `staff.shiftId` là id DÒNG CA THẬT (CA-xxxx) lấy từ GET /api/shifts.
+      // `shift.id` là id khung ca mẫn nên backend không tìm thấy ca để xoá.
+      if (staff.shiftId.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ca chưa được phân cho nhân viên này nên không thể hủy'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        return;
       }
+      await ShiftRepository().deleteShift(staff.shiftId);
       if (!context.mounted) return;
       Navigator.pop(context, true);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -402,17 +451,37 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Hủy ca thất bại: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text(e is ApiException ? e.message : 'Hủy ca thất bại'),
+          backgroundColor: AppColors.error,
+        ),
       );
     }
   }
 
   Future<void> _handleCheckIn(BuildContext context) async {
     try {
-      final empId = staff.id.isNotEmpty ? staff.id : (staff.phone.isNotEmpty ? staff.phone : '1');
-      await AttendanceRepository().checkIn(
-        employeeId: empId,
-        shiftId: shift.id,
+      if (staff.id.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Không xác định được nhân viên để chấm công'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        return;
+      }
+      if (staff.shiftId.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ca chưa được phân cho nhân viên này nên không thể chấm công'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        return;
+      }
+      await (attendance ?? AttendanceRepository()).checkIn(
+        employeeId: staff.id,
+        shiftId: staff.shiftId,
       );
       if (!context.mounted) return;
       Navigator.pop(context, true);
@@ -425,7 +494,41 @@ class StaffGeneralShiftDetailScreen extends StatelessWidget {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Chấm công thất bại: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text(e is ApiException ? e.message : 'Chấm công thất bại'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
+  }
+
+  /// Chốt ra một ca bị bỏ qua (`attendanceState` = 'missed_checkout') bằng
+  /// chính hành động check-out thường. `shiftId` là id dòng ca thật
+  /// (`staff.shiftId` từ GET /api/shifts) — bắt buộc khi chốt cho nhân viên
+  /// khác để backend đóng đúng bản ghi. Giờ ra do server tính, client không gửi.
+  /// Thành công thì pop(true) để màn lịch chung tải lại, nhãn 'Bỏ qua ca' biến mất.
+  /// Lỗi 400/403 thì hiện đúng `error.message` của backend (envelope { error }).
+  Future<void> _handleCheckOutSkipped(BuildContext context) async {
+    try {
+      await (attendance ?? AttendanceRepository()).checkOut(
+        employeeId: staff.id,
+        shiftId: staff.shiftId,
+      );
+      if (!context.mounted) return;
+      Navigator.pop(context, true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ Đã chốt ra ca ${shift.shiftName} của ${staff.name}'),
+          backgroundColor: AppColors.success,
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e is ApiException ? e.message : '❌ Chốt ra ca thất bại'),
+          backgroundColor: AppColors.error,
+        ),
       );
     }
   }

@@ -17,7 +17,6 @@ class AssignedStaff {
   final String name;
   final String role;
   final String avatarText;
-  bool isRecurring;
   String? shiftId;
 
   AssignedStaff({
@@ -25,7 +24,6 @@ class AssignedStaff {
     required this.name,
     required this.role,
     required this.avatarText,
-    this.isRecurring = true,
     this.shiftId,
   });
 }
@@ -51,8 +49,8 @@ class ShiftInfo {
   bool get hasSchedule => timeRange.contains('-') && startTime.isNotEmpty && endTime.isNotEmpty;
 }
 
-/// Nguyện vọng đăng ký ca của một nhân sự trong tuần đang xem.
-/// DB chỉ lưu employeeId/shiftId/week (week là chuỗi dd/MM), không có thứ hay tên ca.
+/// Nguyện vọng đăng ký ca của một nhân viên trong tuần đang xem.
+/// Backend lưu employeeId + templateId + registerDate.
 class EmployeeShiftRegistration {
   final String employeeId;
   final Map<String, String> days;
@@ -132,7 +130,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
     return '${vnDate(monday)} - ${vnDate(sunday)}';
   }
 
-  String? _loadedBranchSlug;
+  String? _loadedBranchId;
   String? _loadError;
 
   @override
@@ -146,8 +144,8 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final branch = BranchScope.selectedBranch(context);
-    if (_loadedBranchSlug != branch?.slug) {
-      _loadedBranchSlug = branch?.slug;
+    if (_loadedBranchId != branch?.id) {
+      _loadedBranchId = branch?.id;
       _loadApiData();
     }
   }
@@ -161,9 +159,6 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
         },
     };
   }
-
-  /// Khóa ngắn dd/MM (chỉ dùng để so khớp đăng ký ca cũ; ngày gửi API là DD/MM/YYYY).
-  String _ddMM(DateTime d) => vnDate(d).substring(0, 5);
 
   /// Đọc ngày ca từ API (DD/MM/YYYY, ISO hoặc dd-MM-yyyy cũ) về DateTime.
   DateTime? _parseShiftDate(String raw) => parseVnDate(raw);
@@ -197,16 +192,16 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
         final end = t['endTime']?.toString() ?? '';
 
         FaIconData icon = FontAwesomeIcons.briefcase;
-        Color color = const Color(0xFF00695C);
+        Color color = AppColors.successDark;
         if (name.contains('Sáng')) {
           icon = FontAwesomeIcons.sun;
-          color = const Color(0xFFE65100);
+          color = AppColors.warningDark;
         } else if (name.contains('Chiều')) {
           icon = FontAwesomeIcons.cloudSun;
-          color = const Color(0xFF0277BD);
+          color = AppColors.infoBlue;
         } else if (name.contains('Tối')) {
           icon = FontAwesomeIcons.moon;
-          color = const Color(0xFF4A148C);
+          color = AppColors.primary;
         }
 
         templates.add(ShiftInfo(
@@ -219,7 +214,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
       }
 
       // 2. Nhân sự của chi nhánh.
-      final employees = await EmployeeRepository().getEmployees(branchSlug: branch?.slug);
+      final employees = await EmployeeRepository().getEmployees(branchId: branch?.id);
       final staff = <AssignedStaff>[];
       for (final e in employees) {
         final id = e['id']?.toString() ?? '';
@@ -241,50 +236,46 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
         ));
       }
 
-      // 3. Nguyện vọng: DB chỉ có employeeId/shiftId/week, week là chuỗi dd/MM
-      // của ngày đăng ký. Phải quy đổi sang thứ và tên ca, không đoán mặc định.
-      final rawRegs = await ShiftRepository().getRegistrations(branchSlug: branch?.slug);
+      // 3. Nguyện vọng: backend lưu employeeId + templateId + registerDate.
+      // Phải quy đổi registerDate sang thứ và templateId sang tên ca, không đoán mặc định.
+      final rawRegs = await ShiftRepository().getRegistrations(branchId: branch?.id);
       final monday = _thisWeekMonday.add(Duration(days: _weekOffset * 7));
       final dayKeyByDate = <String, String>{};
       for (var i = 0; i < 7; i++) {
-        final d = monday.add(Duration(days: i));
-        // Khóa mới DD/MM/YYYY; giữ thêm khóa dd/MM để đọc được đăng ký cũ.
-        dayKeyByDate[vnDate(d)] = _weekDayKeys[i];
-        dayKeyByDate[_ddMM(d)] = _weekDayKeys[i];
+        dayKeyByDate[vnDate(monday.add(Duration(days: i)))] = _weekDayKeys[i];
       }
       final shiftNameById = {for (final s in templates) s.id: s.name};
       final wishes = <String, Map<String, String>>{};
       for (final r in rawRegs) {
         final empId = r['employeeId']?.toString() ?? '';
-        final rawWeek = r['week']?.toString() ?? '';
-        final dayKey = dayKeyByDate[toVnDate(rawWeek)] ?? dayKeyByDate[rawWeek];
-        final shiftName = shiftNameById[r['shiftId']?.toString() ?? ''];
+        final dayKey = dayKeyByDate[toVnDate(r['registerDate']?.toString() ?? '')];
+        final shiftName = shiftNameById[r['templateId']?.toString() ?? ''];
         if (empId.isEmpty || dayKey == null || shiftName == null) continue;
         (wishes[empId] ??= {})[dayKey] = shiftName;
       }
 
       // 4. Ca đã xếp.
-      final shifts = await ShiftRepository().getShifts(branchSlug: branch?.slug);
+      final shifts = await ShiftRepository().getShifts(branchId: branch?.id);
       final staffById = {for (final s in staff) s.id: s};
       final assignments = {
         for (final k in _weekDayKeys) k: {for (final s in templates) s.name: <AssignedStaff>[]},
       };
       final monPure = DateTime(monday.year, monday.month, monday.day);
       for (final s in shifts) {
-        final sDate = _parseShiftDate(s.date);
+        final sDate = _parseShiftDate(s.workDate);
         if (sDate == null) continue;
         final diffDays = DateTime(sDate.year, sDate.month, sDate.day).difference(monPure).inDays;
         if (diffDays < 0 || diffDays >= 7) continue;
         final dayKey = _weekDayKeys[diffDays];
         final matched = s.employeeId == null ? null : staffById[s.employeeId];
-        final templateName = s.template.isEmpty ? '—' : s.template;
+        final templateName = shiftNameById[s.templateId] ??
+            (s.templateId.isEmpty ? '—' : s.templateId);
         assignments[dayKey]![templateName] ??= [];
         assignments[dayKey]![templateName]!.add(AssignedStaff(
           id: matched?.id ?? s.employeeId ?? '',
           name: matched?.name ?? '—',
           role: matched?.role ?? '',
           avatarText: matched?.avatarText ?? '—',
-          isRecurring: s.isRecurring,
           shiftId: s.id,
         ));
       }
@@ -315,7 +306,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
               name: k,
               timeRange: '—',
               icon: FontAwesomeIcons.briefcase,
-              color: const Color(0xFF616161),
+              color: AppColors.textSecondary,
             ));
     return [..._availableShifts, ...extra];
   }
@@ -343,29 +334,15 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
       _showError('Khung ca "$shiftName" chưa có giờ làm nên không thể xếp ca.');
       return;
     }
-    final branch = BranchScope.read(context)?.notifier?.value;
-    final branchSlug = (branch != null && branch.slug.isNotEmpty)
-        ? branch.slug
-        : (widget.currentUser.branchSlug ?? '');
-    if (branchSlug.isEmpty) {
-      _showError('Chọn chi nhánh trước khi xếp ca.');
-      return;
-    }
     final targetDate = _thisWeekMonday.add(Duration(days: _weekOffset * 7 + dayIndex));
     final dateStr = vnDate(targetDate);
 
     try {
-      final created = await ShiftRepository().createShift({
-        'employeeId': staff.id,
-        'branchSlug': branchSlug,
-        'date': dateStr,
-        'template': shiftName,
-        'scheduledStart': shiftInfo.startTime,
-        'scheduledEnd': shiftInfo.endTime,
-        'status': 'Chưa chấm công',
-        'note': '',
-        'isRecurring': staff.isRecurring,
-      });
+      final created = await ShiftRepository().createShift(
+        employeeId: staff.id,
+        templateId: shiftInfo.id,
+        workDate: dateStr,
+      );
       if (!mounted) return;
       setState(() {
         staff.shiftId = created.id;
@@ -376,7 +353,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: AppColors.success,
-          content: Text('Đã thêm ${staff.name} vào $shiftName (${staff.isRecurring ? 'Lặp lại hàng tuần' : '1 lần'})'),
+          content: Text('Đã thêm ${staff.name} vào $shiftName'),
           duration: const Duration(seconds: 2),
           behavior: SnackBarBehavior.floating,
         ),
@@ -411,32 +388,6 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
       ),
     );
     _loadApiData();
-  }
-
-  Future<void> _toggleRecurring(String dayKey, String shiftName, AssignedStaff staff) async {
-    final shiftId = staff.shiftId;
-    if (shiftId == null || shiftId.isEmpty) {
-      _showError('Ca này chưa có mã trên hệ thống nên không đổi được chế độ lặp.');
-      return;
-    }
-    final next = !staff.isRecurring;
-    try {
-      await ShiftRepository().updateShift(shiftId, {'isRecurring': next});
-    } catch (e) {
-      _showError('Không lưu được chế độ lặp: ${_errorText(e)}');
-      return;
-    }
-    if (!mounted) return;
-    setState(() => staff.isRecurring = next);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(next
-            ? 'Đã bật lặp lại hàng tuần cho ${staff.name}'
-            : 'Đã đổi sang phân công 1 lần cho ${staff.name}'),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   @override
@@ -668,12 +619,12 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
 
           // Phần xổ xuống: Danh sách các nhân viên đã được xếp
           if (isExpanded) ...[
-            const Divider(height: 1, thickness: 1, color: Color(0xFFF1F5F9)),
+            const Divider(height: 1, thickness: 1, color: AppColors.border),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
               decoration: const BoxDecoration(
-                color: Color(0xFFF8FAFC),
+                color: AppColors.surfaceSubtle,
                 borderRadius: BorderRadius.vertical(bottom: Radius.circular(15)),
               ),
               child: staffList.isEmpty
@@ -714,7 +665,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
     );
   }
 
-  // Thẻ của từng nhân viên đã được xếp trong ca (Kèm NÚT LẶP LẠI & NÚT XÓA)
+  // Thẻ của từng nhân viên đã được xếp trong ca (Kèm NÚT XÓA)
   Widget _buildStaffItem(String dayKey, ShiftInfo shift, AssignedStaff staff) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -761,42 +712,6 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
               ),
             ),
 
-            // NÚT LẶP LẠI (Tương tác bấm bật/tắt lặp lại hàng tuần)
-            InkWell(
-              onTap: () => _toggleRecurring(dayKey, shift.name, staff),
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                decoration: BoxDecoration(
-                  color: staff.isRecurring ? const Color(0xFFEFF6FF) : Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: staff.isRecurring ? const Color(0xFF3B82F6) : Colors.grey.shade300,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    FaIcon(
-                      staff.isRecurring ? FontAwesomeIcons.repeat : FontAwesomeIcons.one,
-                      size: 13,
-                      color: staff.isRecurring ? const Color(0xFF1D4ED8) : Colors.grey.shade600,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      staff.isRecurring ? 'Lặp lại' : '1 lần',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: staff.isRecurring ? const Color(0xFF1D4ED8) : Colors.grey.shade700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 4),
-
             // Nút xóa nhân viên khỏi ca
             IconButton(
               icon: const FaIcon(FontAwesomeIcons.circleMinus, color: Colors.redAccent, size: 20),
@@ -809,15 +724,10 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
     );
   }
 
-  // MODAL KHI BẤM DẤU CỘNG (+): MỖI NHÂN VIÊN SẼ CÓ MỘT CÁI NÚT LÀ LẶP LẠI
+  // MODAL KHI BẤM DẤU CỘNG (+): THÊM NHÂN VIÊN VÀO CA
   void _showAddStaffModal(String dayKey, ShiftInfo shift) {
     final currentStaff = _assignments[dayKey]?[shift.name] ?? [];
     final currentStaffIds = currentStaff.map((s) => s.id).toSet();
-
-    // Map lưu trạng thái lặp lại cho từng nhân viên trong modal
-    final Map<String, bool> localRecurring = {
-      for (var emp in _branchEmployees) emp.id: true,
-    };
 
     showModalBottomSheet(
       context: context,
@@ -896,7 +806,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                   const SizedBox(height: 10),
 
                   const Text(
-                    'Chọn nhân sự để xếp vào ca (Có thể bật lặp lại hàng tuần):',
+                    'Chọn nhân sự để xếp vào ca:',
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
                   ),
                   const SizedBox(height: 8),
@@ -909,7 +819,6 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                       itemBuilder: (context, idx) {
                         final emp = _branchEmployees[idx];
                         final isAlreadyInShift = currentStaffIds.contains(emp.id);
-                        final isRec = localRecurring[emp.id] ?? true;
 
                         // Nguyện vọng của nhân viên này
                         final reg = _registrations.where((r) => r.employeeId == emp.id).firstOrNull;
@@ -967,7 +876,7 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                                             ),
                                             child: const Text(
                                               '⭐ Muốn làm ca này',
-                                              style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Color(0xFFB45309)),
+                                              style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: AppColors.warningText),
                                             ),
                                           ),
                                       ],
@@ -989,46 +898,6 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                                   ),
                                 ),
                               ] else ...[
-                                // NÚT LẶP LẠI (CHO MỖI NHÂN VIÊN)
-                                InkWell(
-                                  onTap: () {
-                                    setModalState(() {
-                                      localRecurring[emp.id] = !isRec;
-                                    });
-                                  },
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                                    decoration: BoxDecoration(
-                                      color: isRec ? const Color(0xFFEFF6FF) : Colors.grey.shade100,
-                                      borderRadius: BorderRadius.circular(8),
-                                      border: Border.all(
-                                        color: isRec ? const Color(0xFF3B82F6) : Colors.grey.shade300,
-                                      ),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        FaIcon(
-                                          isRec ? FontAwesomeIcons.repeat : FontAwesomeIcons.one,
-                                          size: 13,
-                                          color: isRec ? const Color(0xFF1D4ED8) : Colors.grey.shade600,
-                                        ),
-                                        const SizedBox(width: 3),
-                                        Text(
-                                          isRec ? 'Lặp lại' : '1 lần',
-                                          style: TextStyle(
-                                            fontSize: 10.5,
-                                            fontWeight: FontWeight.bold,
-                                            color: isRec ? const Color(0xFF1D4ED8) : Colors.grey.shade700,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-
                                 // Nút + Thêm
                                 ElevatedButton(
                                   onPressed: () {
@@ -1040,7 +909,6 @@ class _ShiftAssignmentScreenState extends State<ShiftAssignmentScreen> {
                                         name: emp.name,
                                         role: emp.role,
                                         avatarText: emp.avatarText,
-                                        isRecurring: isRec,
                                       ),
                                     );
                                     setModalState(() {

@@ -1,17 +1,32 @@
 /// Mô hình người dùng cho hệ thống HRM On-Premises.
+///
+/// Phần tài khoản lấy đúng từ `toSafeUser` của identity-service:
+/// `id, employeeId, email, name, systemRole, role, branchId`.
+/// `employeeId` là UUID nhân sự mà mọi service nghiệp vụ (work/payroll) cần;
+/// `id` chỉ là id tài khoản và không được dùng thay cho `employeeId`.
+///
+/// Phần còn lại là cache hồ sơ organization-service (`EmployeeRepository`) mà
+/// màn Tài khoản nạp và cho chính nhân viên tự sửa.
 class UserModel {
   final String id;
+
+  /// UUID hồ sơ nhân sự trong organization-service; null với tài khoản chưa gán.
+  final String? employeeId;
   final String name;
   final String email;
-  final String phone;
+
+  /// Vai trò hệ thống: quyền quyết định là `systemRole` phía backend, `role`
+  /// chỉ còn là fallback cho dữ liệu cũ.
   final String role; // 'admin', 'manager', 'staff'
-  final String roleTitle;
 
   /// Chi nhánh được gán cho nhân sự (Admin và Manager cũng thuộc chi nhánh/HQ).
   final String? assignedBranchId;
-  final String? branchSlug;
 
-  /// Thông tin cá nhân & Địa chỉ cư trú (đồng bộ hệ thống)
+  /// Hồ sơ nhân sự do organization-service trả (`EmployeeRepository`), nằm
+  /// trong `selfFields` nên chính nhân viên được đọc/ghi: `phone`, `avatar`,
+  /// `cccdFront`. `toSafeUser` không có các trường này nên chúng rỗng cho tới
+  /// khi màn Tài khoản nạp hồ sơ.
+  final String phone;
   final String gender;
   final String birthDate;
   final String province;
@@ -22,29 +37,26 @@ class UserModel {
   final String cccd;
   final String issueDate;
   final String issuePlace;
+  final String? cccdFrontUrl;
+  final String? cccdBackUrl;
+
+  /// Đường dẫn ảnh đại diện (cột `avatar` của Employee).
+  final String? avatarUrl;
 
   /// Cấu hình tính lương & Tài khoản ngân hàng
   final String salaryType; // 'hourly' (Lương theo giờ) hoặc 'monthly' (Lương cơ bản tháng)
-  final double hourlySalary; // VNĐ/giờ (khi checkout ca sẽ nhân số giờ làm)
-  final double baseSalary; // VNĐ/tháng (cố định, checkout không cộng giờ, chỉ trừ khi phạt)
   final String bankName; // Tên ngân hàng nhận lương
   final String bankAccountNumber; // Số tài khoản ngân hàng
   final String bankAccountName; // Tên chủ tài khoản
 
-  /// Hình ảnh xác thực (lưu trữ nội bộ)
-  final String? avatarUrl;
-  final String? cccdFrontUrl;
-  final String? cccdBackUrl;
-
   const UserModel({
     this.id = '',
+    this.employeeId,
     required this.name,
     required this.email,
-    this.phone = '',
     required this.role,
-    required this.roleTitle,
     this.assignedBranchId,
-    this.branchSlug,
+    this.phone = '',
     this.gender = '',
     this.birthDate = '',
     this.province = '',
@@ -53,30 +65,28 @@ class UserModel {
     this.cccd = '',
     this.issueDate = '',
     this.issuePlace = '',
+    this.cccdFrontUrl,
+    this.cccdBackUrl,
+    this.avatarUrl,
     this.salaryType = 'hourly',
-    this.hourlySalary = 0.0,
-    this.baseSalary = 0.0,
     this.bankName = '',
     this.bankAccountNumber = '',
     this.bankAccountName = '',
-    this.avatarUrl,
-    this.cccdFrontUrl,
-    this.cccdBackUrl,
   });
 
   bool get isAdmin => role == 'admin';
   bool get isManager => role == 'manager';
-  bool get isStaff => role == 'staff' || role == 'employee';
+  bool get isStaff => role == 'staff';
   bool get canManage => isAdmin || isManager;
   bool get isHourlySalary => salaryType == 'hourly';
 
   /// `null` ở các trường tham chiếu có nghĩa là "giữ nguyên giá trị cũ".
   UserModel copyWith({
+    String? employeeId,
     String? name,
-    String? phone,
-    String? roleTitle,
+    String? role,
     String? assignedBranchId,
-    String? branchSlug,
+    String? phone,
     String? gender,
     String? birthDate,
     String? province,
@@ -85,25 +95,22 @@ class UserModel {
     String? cccd,
     String? issueDate,
     String? issuePlace,
+    String? cccdFrontUrl,
+    String? cccdBackUrl,
+    String? avatarUrl,
     String? salaryType,
-    double? hourlySalary,
-    double? baseSalary,
     String? bankName,
     String? bankAccountNumber,
     String? bankAccountName,
-    String? avatarUrl,
-    String? cccdFrontUrl,
-    String? cccdBackUrl,
   }) {
     return UserModel(
       id: id,
+      employeeId: employeeId ?? this.employeeId,
       name: name ?? this.name,
       email: email,
-      phone: phone ?? this.phone,
-      role: role,
-      roleTitle: roleTitle ?? this.roleTitle,
+      role: role ?? this.role,
       assignedBranchId: assignedBranchId ?? this.assignedBranchId,
-      branchSlug: branchSlug ?? this.branchSlug,
+      phone: phone ?? this.phone,
       gender: gender ?? this.gender,
       birthDate: birthDate ?? this.birthDate,
       province: province ?? this.province,
@@ -112,15 +119,13 @@ class UserModel {
       cccd: cccd ?? this.cccd,
       issueDate: issueDate ?? this.issueDate,
       issuePlace: issuePlace ?? this.issuePlace,
+      cccdFrontUrl: cccdFrontUrl ?? this.cccdFrontUrl,
+      cccdBackUrl: cccdBackUrl ?? this.cccdBackUrl,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
       salaryType: salaryType ?? this.salaryType,
-      hourlySalary: hourlySalary ?? this.hourlySalary,
-      baseSalary: baseSalary ?? this.baseSalary,
       bankName: bankName ?? this.bankName,
       bankAccountNumber: bankAccountNumber ?? this.bankAccountNumber,
       bankAccountName: bankAccountName ?? this.bankAccountName,
-      avatarUrl: avatarUrl ?? this.avatarUrl,
-      cccdFrontUrl: cccdFrontUrl ?? this.cccdFrontUrl,
-      cccdBackUrl: cccdBackUrl ?? this.cccdBackUrl,
     );
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/colors.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/branch_scope.dart';
@@ -10,28 +11,42 @@ import '../../core/utils/date_format.dart';
 import '../attendance/attendance_repository.dart';
 import 'shift_repository.dart';
 import '../profile/employee_repository.dart';
-import 'staff_detail.dart';
 
 class StaffInShift {
   final String id;
   final String name;
   final String role;
-  final String avatarUrl;
   final String checkInStatus; // 'checked_in', 'in_progress', 'not_yet'
   final String checkInTime;
   final String checkOutTime;
   final String phone;
 
+  /// Id dòng ca thật từ `GET /api/shifts` — cần cho lượt bổ sung chấm công.
+  final String shiftId;
+
+  /// `attendanceState` của ca: not_started | working | completed |
+  /// missed_checkin | missed_checkout; 'missed_checkout' = ca bị bỏ qua vì quá
+  /// hạn chốt ra (đã check-in nhưng chưa checkOut trong cửa sổ cho phép).
+  final String attendanceStatus;
+
   const StaffInShift({
     this.id = '',
     required this.name,
     required this.role,
-    this.avatarUrl = '',
     required this.checkInStatus,
     required this.checkInTime,
     this.checkOutTime = '',
     required this.phone,
+    this.shiftId = '',
+    this.attendanceStatus = '',
   });
+
+  /// Ca bị bỏ qua: đã vào ca nhưng không chốt ra trong thời gian cho phép.
+  /// `checkOut` được backend giữ nguyên `null` nên ca này không được tính công.
+  bool get isSkippedCheckout =>
+      attendanceStatus == 'missed_checkout' &&
+      checkInTime.isNotEmpty &&
+      checkOutTime.isEmpty;
 }
 
 class GeneralShiftModel {
@@ -84,8 +99,14 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
   List<ApiShiftModel> _apiShifts = [];
   List<Map<String, dynamic>> _apiEmployees = [];
   List<Map<String, dynamic>> _apiTemplates = [];
-  int _gracePeriodMinutes = 5;
-  String? _loadedBranchSlug;
+  // Ngưỡng cho phép vào ca muộn (phút); backend mặc định 0, giá trị thật lấy
+  // từ GET /api/attendance/config theo chi nhánh.
+  int _gracePeriodMinutes = 0;
+  // Thời gian cho phép chốt ra sau khi hết ca (phút); 60 là mặc định của
+  // backend, 0 = tính năng tắt. Màn này chỉ đọc cấu hình để dùng, việc lưu
+  // thuộc về màn "Cấu hình chấm công" (PUT /api/attendance/config).
+  int _checkoutWindowMinutes = 60;
+  String? _loadedBranchId;
   String? _loadError;
 
   // Offset tuần so với tuần hiện tại (0: Tuần này, -1: Tuần trước, 1: Tuần sau, -2, 2, ...)
@@ -112,8 +133,8 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final branch = BranchScope.selectedBranch(context);
-    if (_loadedBranchSlug != branch?.slug) {
-      _loadedBranchSlug = branch?.slug;
+    if (_loadedBranchId != branch?.id) {
+      _loadedBranchId = branch?.id;
       _loadGeneralData();
     }
   }
@@ -123,19 +144,29 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
     try {
       final results = await Future.wait([
         _empRepo.getEmployees(),
-        _shiftRepo.getShifts(branchSlug: branch?.slug),
+        _shiftRepo.getShifts(branchId: branch?.id),
         _shiftRepo.getTemplates(),
-        _attRepo.getConfig(),
       ]);
+      // Cấu hình chấm công là dữ liệu phụ: lỗi đọc cấu hình không được làm hỏng
+      // cả màn lịch, nhưng vẫn phải báo ra chứ không lặng lẽ dùng mặc định.
+      Map<String, dynamic> cfg = {};
+      String? configError;
+      try {
+        cfg = await _attRepo.getConfig();
+      } catch (e) {
+        configError = e is ApiException ? e.message : 'Không đọc được cấu hình chấm công';
+      }
       if (!mounted) return;
-      final cfg = results[3] as Map<String, dynamic>;
       final grace = cfg['gracePeriodMinutes'];
+      final window = cfg['checkoutWindowMinutes'];
       setState(() {
         _apiEmployees = (results[0] as List).cast<Map<String, dynamic>>();
         _apiShifts = (results[1] as List).cast<ApiShiftModel>();
         _apiTemplates = (results[2] as List).cast<Map<String, dynamic>>();
         if (grace is int) _gracePeriodMinutes = grace;
-        _loadError = null;
+        // API cũ chưa trả trường này thì giữ 60 phút theo mặc định backend.
+        if (window is int) _checkoutWindowMinutes = window;
+        _loadError = configError;
       });
     } catch (e) {
       if (!mounted) return;
@@ -232,7 +263,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
       final isPast = dayDate.isBefore(_today);
       final dateStr = vnDate(dayDate);
 
-      final shiftsForDay = _apiShifts.where((s) => _matchesDate(s.date, dayDate)).toList();
+      final shiftsForDay = _apiShifts.where((s) => _matchesDate(s.workDate, dayDate)).toList();
       final dayShifts = <GeneralShiftModel>[];
 
       // Dựng danh sách ca theo 3 khung ca mẫu chuẩn từ Backend (Ca Sáng, Ca Chiều, Ca Tối)
@@ -249,7 +280,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
           final addedEmpIds = <String>{};
 
           for (final s in shiftsForDay) {
-            final shiftTName = s.template;
+            final shiftTName = s.templateId;
             if (_matchesShiftTemplate(shiftTName, tName, tId)) {
               final empId = s.employeeId ?? '';
               if (empId.isNotEmpty && !addedEmpIds.contains(empId)) {
@@ -268,6 +299,8 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
                   checkInTime: hasCheckedIn ? s.checkIn! : '',
                   checkOutTime: (s.checkOut != null && s.checkOut!.isNotEmpty && s.checkOut != '—') ? s.checkOut! : '',
                   phone: emp['phone']?.toString() ?? '—',
+                  shiftId: s.id,
+                  attendanceStatus: s.attendanceState,
                 ));
               }
             }
@@ -286,7 +319,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
         // Fallback nếu API templates chưa về
         final Map<String, List<ApiShiftModel>> grouped = {};
         for (final s in shiftsForDay) {
-          final key = '${s.scheduledStart}-${s.scheduledEnd}-${s.template}';
+          final key = '${s.scheduledStart}-${s.scheduledEnd}-${s.templateId}';
           grouped.putIfAbsent(key, () => []).add(s);
         }
         for (final entry in grouped.entries) {
@@ -307,12 +340,14 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
                 checkInTime: hasCheckedIn ? s.checkIn! : '',
                 checkOutTime: (s.checkOut != null && s.checkOut!.isNotEmpty && s.checkOut != '—') ? s.checkOut! : '',
                 phone: emp['phone']?.toString() ?? '—',
+                shiftId: s.id,
+                attendanceStatus: s.attendanceState,
               ));
             }
           }
           dayShifts.add(GeneralShiftModel(
             id: first.id,
-            shiftName: first.template,
+            shiftName: first.templateId,
             startTime: first.scheduledStart,
             endTime: first.scheduledEnd,
             status: isPast ? 'completed' : (isToday ? 'in_progress' : 'upcoming'),
@@ -641,12 +676,12 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
 
           // Phần xổ xuống: Danh sách các nhân viên trong ca
           if (isExpanded) ...[
-            const Divider(height: 1, thickness: 1, color: Color(0xFFF1F5F9)),
+            const Divider(height: 1, thickness: 1, color: AppColors.border),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
               decoration: const BoxDecoration(
-                color: Color(0xFFF8FAFC),
+                color: AppColors.surfaceSubtle,
                 borderRadius: BorderRadius.vertical(bottom: Radius.circular(15)),
               ),
               child: shift.staffList.isEmpty
@@ -722,13 +757,21 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
         isLate = ch * 60 + cm - (sh * 60 + sm) > _gracePeriodMinutes;
       }
     }
-    Color checkInColor = staff.checkInStatus == 'checked_in'
-        ? (isLate ? Colors.orange.shade700 : AppColors.success)
-        : (staff.checkInStatus == 'in_progress' ? Colors.orange : (isForgot ? Colors.red : Colors.grey));
+    // Ca bị bỏ qua vì quên chốt ra (status 'missed', checkOut = null): không
+    // được tính công, chỉ Admin/Manager bổ sung được.
+    final bool isSkipped = staff.isSkippedCheckout;
 
-    String checkInLabel = staff.checkInStatus == 'checked_in'
-        ? (isLate ? 'Trễ' : 'Đúng giờ')
-        : (staff.checkInStatus == 'in_progress' ? 'Đang trong ca' : (isForgot ? 'Quên chấm công' : 'Chưa chấm công'));
+    Color checkInColor = isSkipped
+        ? Colors.red.shade700
+        : staff.checkInStatus == 'checked_in'
+            ? (isLate ? Colors.orange.shade700 : AppColors.success)
+            : (staff.checkInStatus == 'in_progress' ? Colors.orange : (isForgot ? Colors.red : Colors.grey));
+
+    String checkInLabel = isSkipped
+        ? 'Bỏ qua ca'
+        : staff.checkInStatus == 'checked_in'
+            ? (isLate ? 'Trễ' : 'Đúng giờ')
+            : (staff.checkInStatus == 'in_progress' ? 'Đang trong ca' : (isForgot ? 'Quên chấm công' : 'Chưa chấm công'));
 
     // Phân quyền xem chi tiết ca:
     // - Admin hoặc Manager: xem chi tiết ca của mọi nhân viên.
@@ -747,31 +790,9 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
         side: BorderSide(color: Colors.grey.shade200),
       ),
       child: InkWell(
-        onTap: canViewDetail
-            ? () => _showStaffShiftDetail(staff, shift, day)
-            : () {
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: const Row(
-                      children: [
-                        FaIcon(FontAwesomeIcons.lock, color: Colors.white, size: 18),
-                        SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Chỉ Quản trị viên và Quản lý mới có quyền xem chi tiết ca của nhân viên khác.',
-                            style: TextStyle(fontSize: 13),
-                          ),
-                        ),
-                      ],
-                    ),
-                    backgroundColor: const Color(0xFF334155),
-                    behavior: SnackBarBehavior.floating,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    duration: const Duration(seconds: 2),
-                  ),
-                );
-              },
+        // Không có quyền xem chi tiết thì thẻ không bấm được (icon khoá ở cuối
+        // dòng đã báo hiệu), thay vì bấm xong mới báo "không có quyền".
+        onTap: canViewDetail ? () => _showStaffShiftDetail(staff, shift, day) : null,
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -880,47 +901,23 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
     );
   }
 
-  void _showStaffShiftDetail(StaffInShift staff, GeneralShiftModel shift, GeneralDayModel day) {
+  Future<void> _showStaffShiftDetail(StaffInShift staff, GeneralShiftModel shift, GeneralDayModel day) async {
     final currentUser = UserScope.currentUser(context);
     final bool canManage = UserScope.canManage(context);
     final bool isOwnShift = currentUser != null &&
         currentUser.name.trim().toLowerCase() == staff.name.trim().toLowerCase();
 
-    if (!canManage && !isOwnShift) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Row(
-            children: [
-              FaIcon(FontAwesomeIcons.lock, color: Colors.white, size: 18),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Chỉ Quản trị viên và Quản lý mới có quyền xem chi tiết ca của nhân viên khác.',
-                  style: TextStyle(fontSize: 13),
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: const Color(0xFF334155),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          duration: const Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
+    if (!canManage && !isOwnShift) return;
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => StaffGeneralShiftDetailScreen(
-          staff: staff,
-          shift: shift,
-          day: day,
-          gracePeriodMinutes: _gracePeriodMinutes,
-        ),
-      ),
-    );
+    final changed = await context.push<bool>('/schedule/staff-detail', extra: {
+      'staff': staff,
+      'shift': shift,
+      'day': day,
+      'gracePeriodMinutes': _gracePeriodMinutes,
+      'checkoutWindowMinutes': _checkoutWindowMinutes,
+    });
+    // Màn chi tiết đã ghi/bỏ ghi công (hủy ca, chấm công, bổ sung) thì tải lại
+    // để danh sách chung không hiển thị trạng thái cũ.
+    if (changed == true && mounted) await _loadGeneralData();
   }
 }

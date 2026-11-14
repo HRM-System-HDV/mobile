@@ -87,9 +87,11 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
       final results = await Future.wait([
         EmployeeRepository().getEmployees(),
         ShiftRepository().getShifts(),
+        ShiftRepository().getTemplates(),
       ]);
       final emps = results[0] as List<Map<String, dynamic>>;
       final shifts = results[1] as List<ApiShiftModel>;
+      final templates = results[2] as List<Map<String, dynamic>>;
       if (!mounted) return;
       final nameById = <String, String>{};
       final roleById = <String, String>{};
@@ -101,6 +103,11 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
         roleById[id] = e['role']?.toString() ?? '';
         phoneById[id] = e['phone']?.toString() ?? '';
       }
+      final templateNameById = <String, String>{
+        for (final t in templates)
+          if ((t['id']?.toString() ?? '').isNotEmpty)
+            t['id'].toString(): t['name']?.toString() ?? '',
+      };
       final colleagues = emps
           .where((e) => (e['id']?.toString() ?? '').isNotEmpty)
           .map((e) {
@@ -115,16 +122,17 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
           .toList();
       final grouped = <String, Map<String, List<ShiftStaffMember>>>{};
       for (final s in shifts) {
-        if (s.date.trim().isEmpty) continue;
-        final key = _dateKey(s.date);
-        final label = '${s.displayTemplate} (${s.timeLabel})';
+        if (s.workDate.trim().isEmpty) continue;
+        final key = _dateKey(s.workDate);
+        final templateName = templateNameById[s.templateId] ?? s.templateId;
+        final label = '$templateName (${s.timeLabel})';
         final staff = ShiftStaffMember(
           id: s.employeeId ?? s.id,
           shiftId: s.id,
           name: (s.employeeId != null && nameById.containsKey(s.employeeId))
               ? nameById[s.employeeId]!
               : 'Chưa phân công',
-          role: s.template,
+          role: templateName,
           phone: (s.employeeId != null && phoneById.containsKey(s.employeeId))
               ? phoneById[s.employeeId]!
               : '',
@@ -289,8 +297,7 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
           'shiftRole': widget.shift.role,
           'reason': reason,
           'senderName': me.name,
-          'senderRole': me.roleTitle.isNotEmpty ? me.roleTitle : me.role,
-          'senderPhone': me.phone,
+          'senderRole': me.role,
         };
 
     switch (widget.actionType) {
@@ -303,7 +310,9 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
           return;
         }
         final person = colleague.first;
-        reqType = 'overtime';
+        // Nhờ làm thay = shift_swap một chiều: BE chỉ nhận 4 loại
+        // leave/advance/shift_swap/work_supplement và cho phép thiếu targetShiftId.
+        reqType = 'shift_swap';
         title = 'Nhờ làm thay: ${widget.shift.shiftName}';
         successMsg = '✅ Đã gửi lời nhờ làm thay tới ${person.displayName}!';
         targetEmployeeId = person.id;
@@ -355,7 +364,8 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
         'title': title,
         'content': content,
         'employeeId': me.id,
-        if (widget.shift.branch.isNotEmpty) 'branchSlug': widget.shift.branch,
+        // Gửi id chi nhánh lên API, tên chỉ dùng hiển thị.
+        if (widget.shift.branchId.isNotEmpty) 'branchId': widget.shift.branchId,
         if (widget.shift.id.isNotEmpty) 'sourceShiftId': widget.shift.id,
         if (targetShiftId != null) 'targetShiftId': targetShiftId,
         if (targetEmployeeId != null) 'targetEmployeeId': targetEmployeeId,
@@ -492,6 +502,11 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
               if (widget.actionType == ShiftActionType.swap) _buildSwapFields(),
               if (widget.actionType == ShiftActionType.leave) _buildLeaveFields(),
 
+              // Điều kiện & hệ quả của đơn đổi ca theo integration-service:
+              // validateSwap chỉ nhận ca chưa tới giờ/chưa chấm công, và khi
+              // duyệt/chấp nhận thì work-service đổi lịch phân ca thật.
+              if (widget.actionType != ShiftActionType.leave) _buildSwapRuleNote(),
+
               const SizedBox(height: 30),
 
               // ── 3. Nút gửi ──────────────────────────────────────────
@@ -517,6 +532,34 @@ class _ShiftActionFormScreenState extends State<ShiftActionFormScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // ── Ghi chú điều kiện đổi ca ──────────────────────────────────────────
+  Widget _buildSwapRuleNote() {
+    return Container(
+      margin: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue.shade200),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          FaIcon(FontAwesomeIcons.circleInfo, size: 16, color: AppColors.primary),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Chỉ đổi được ca chưa tới giờ và chưa chấm công. Khi Quản lý duyệt '
+              'hoặc người được nhờ chấp nhận, lịch phân ca đổi thật (đổi cả hai chiều '
+              'với Đổi ca, một chiều với Nhờ làm thay).',
+              style: TextStyle(fontSize: 12.5, height: 1.45, color: AppColors.textPrimary),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -51,11 +51,14 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: AppColors.success,
-          content: Text('✅ Đổi mật khẩu thành công! Vui lòng sử dụng mật khẩu mới cho các lần đăng nhập sau.'),
+          content: Text('✅ Đổi mật khẩu thành công! Mọi thiết bị đã đăng xuất, vui lòng đăng nhập lại bằng mật khẩu mới.'),
           behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 4),
         ),
       );
       Navigator.of(context).pop();
+      // Backend đã thu hồi toàn bộ phiên: xóa phiên cục bộ và về màn đăng nhập.
+      await ApiClient.forceExpireSession();
     } on ApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

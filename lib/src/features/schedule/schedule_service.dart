@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/colors.dart';
-import '../../core/models/branch.dart';
 import '../../core/models/user.dart';
 import '../../core/utils/date_format.dart';
 import 'shift_repository.dart';
@@ -11,9 +10,21 @@ class ShiftDetail {
   final String startTime;
   final String endTime;
   final double? hours;
+  /// Tên chi nhánh để hiển thị.
   final String branch;
+  /// UUID chi nhánh (branchId) để gửi lên API; ca không mang chi nhánh nên
+  /// rỗng khi người dùng xem "Tất cả chi nhánh".
+  final String branchId;
   final String role;
-  final String status; // 'completed', 'active', 'upcoming', 'missed'
+
+  /// not_started | working | completed | missed_checkin | missed_checkout | cancelled
+  final String attendanceState;
+
+  /// Backend quyết định cửa sổ check-out; UI chỉ cho ra ca khi cờ này bật.
+  final bool canCheckout;
+
+  /// 'completed', 'active', 'upcoming', 'missed', 'cancelled'
+  final String status;
 
   const ShiftDetail({
     this.id = '',
@@ -22,7 +33,10 @@ class ShiftDetail {
     required this.endTime,
     required this.hours,
     required this.branch,
+    this.branchId = '',
     required this.role,
+    this.attendanceState = 'not_started',
+    this.canCheckout = false,
     required this.status,
   });
 
@@ -39,7 +53,10 @@ class ShiftDetail {
     String? endTime,
     double? hours,
     String? branch,
+    String? branchId,
     String? role,
+    String? attendanceState,
+    bool? canCheckout,
     String? status,
   }) {
     return ShiftDetail(
@@ -49,7 +66,10 @@ class ShiftDetail {
       endTime: endTime ?? this.endTime,
       hours: hours ?? this.hours,
       branch: branch ?? this.branch,
+      branchId: branchId ?? this.branchId,
       role: role ?? this.role,
+      attendanceState: attendanceState ?? this.attendanceState,
+      canCheckout: canCheckout ?? this.canCheckout,
       status: status ?? this.status,
     );
   }
@@ -157,10 +177,12 @@ class ScheduleService {
       case 'completed':
         return AppColors.success; // Đã hoàn thành
       case 'missed':
-        return const Color(0xFFDC2626); // Quên chấm công (Đỏ)
+        return AppColors.error; // Quên chấm công (Đỏ)
+      case 'cancelled':
+        return AppColors.textSecondary; // Ca đã hủy (Xám)
       case 'upcoming':
       default:
-        return const Color(0xFF2563EB); // Chưa đến giờ (Xanh dương)
+        return AppColors.infoBlue; // Chưa đến giờ (Xanh dương)
     }
   }
 
@@ -173,238 +195,37 @@ class ScheduleService {
         return 'Đã hoàn thành';
       case 'missed':
         return 'Quên chấm công';
+      case 'cancelled':
+        return 'Đã hủy';
       case 'upcoming':
       default:
         return 'Chưa đến giờ';
     }
   }
 
-  static ShiftDetail _createShift({
-    required String id,
-    required String shiftName,
-    required String startTime,
-    required String endTime,
-    required double hours,
-    required String branch,
-    required String role,
-    required DateTime date,
-    ShiftDetail? activeCheckedInShift,
-    Set<String>? completedShiftIds,
-  }) {
-    final bool isCheckedIn = activeCheckedInShift != null &&
-        (activeCheckedInShift.id == id ||
-            (activeCheckedInShift.shiftName == shiftName && activeCheckedInShift.startTime == startTime));
-    final bool isCheckedOut = completedShiftIds != null && completedShiftIds.contains(id);
-
-    final status = calculateShiftStatus(
-      date: date,
-      startTime: startTime,
-      endTime: endTime,
-      isCheckedIn: isCheckedIn,
-      isCheckedOut: isCheckedOut,
-    );
-
-    return ShiftDetail(
-      id: id,
-      shiftName: shiftName,
-      startTime: startTime,
-      endTime: endTime,
-      hours: hours,
-      branch: branch,
-      role: role,
-      status: status,
-    );
-  }
-
-  /// Lấy danh sách ca làm việc được phân công cho nhân viên theo ngày cụ thể.
-  /// Nếu nhân viên không được xếp ca (hoặc ngày nghỉ như Chủ Nhật), trả về danh sách rỗng `[]`.
-  static List<ShiftDetail> getAssignedShiftsForDate(
-    DateTime date, {
-    UserModel? user,
-    String? branchName,
-    ShiftDetail? activeCheckedInShift,
-    Set<String>? completedShiftIds,
-  }) {
-    final branch = branchName ?? 'Chi nhánh 01';
-
-    // Xác định theo thứ trong tuần (1: Thứ 2, ..., 7: Chủ Nhật)
-    final weekday = date.weekday;
-
-    switch (weekday) {
-      case DateTime.monday: // Thứ 2
-        return [
-          _createShift(
-            id: 'shift_mon_1',
-            shiftName: 'Ca Sáng',
-            startTime: '08:00',
-            endTime: '12:00',
-            hours: 4.0,
-            branch: branch,
-            role: 'Phục vụ',
-            date: date,
-            activeCheckedInShift: activeCheckedInShift,
-            completedShiftIds: completedShiftIds,
-          ),
-        ];
-
-      case DateTime.tuesday: // Thứ 3
-        return [
-          _createShift(
-            id: 'shift_tue_1',
-            shiftName: 'Ca Chiều',
-            startTime: '12:00',
-            endTime: '18:00',
-            hours: 6.0,
-            branch: branch,
-            role: 'Phục vụ',
-            date: date,
-            activeCheckedInShift: activeCheckedInShift,
-            completedShiftIds: completedShiftIds,
-          ),
-        ];
-
-      case DateTime.wednesday: // Thứ 4
-        return [
-          _createShift(
-            id: 'shift_wed_1',
-            shiftName: 'Ca Full ngày',
-            startTime: '08:00',
-            endTime: '16:00',
-            hours: 8.0,
-            branch: branch,
-            role: 'Thu ngân hỗ trợ',
-            date: date,
-            activeCheckedInShift: activeCheckedInShift,
-            completedShiftIds: completedShiftIds,
-          ),
-        ];
-
-      case DateTime.thursday: // Thứ 5
-        return [
-          _createShift(
-            id: 'shift_thu_1',
-            shiftName: 'Ca Sáng (Ca 1)',
-            startTime: '08:00',
-            endTime: '12:00',
-            hours: 4.0,
-            branch: branch,
-            role: 'Phục vụ chính',
-            date: date,
-            activeCheckedInShift: activeCheckedInShift,
-            completedShiftIds: completedShiftIds,
-          ),
-          _createShift(
-            id: 'shift_thu_2',
-            shiftName: 'Ca Tối (Ca 2)',
-            startTime: '18:00',
-            endTime: '22:30',
-            hours: 4.5,
-            branch: branch,
-            role: 'Phục vụ đóng cửa',
-            date: date,
-            activeCheckedInShift: activeCheckedInShift,
-            completedShiftIds: completedShiftIds,
-          ),
-        ];
-
-      case DateTime.friday: // Thứ 6
-        return [
-          _createShift(
-            id: 'shift_fri_1',
-            shiftName: 'Ca Chiều',
-            startTime: '12:00',
-            endTime: '18:00',
-            hours: 6.0,
-            branch: branch,
-            role: 'Phục vụ',
-            date: date,
-            activeCheckedInShift: activeCheckedInShift,
-            completedShiftIds: completedShiftIds,
-          ),
-        ];
-
-      case DateTime.saturday: // Thứ 7
-        return [
-          _createShift(
-            id: 'shift_sat_1',
-            shiftName: 'Ca Sáng (Cuối tuần)',
-            startTime: '07:00',
-            endTime: '12:00',
-            hours: 5.0,
-            branch: branch,
-            role: 'Pha chế / Barista',
-            date: date,
-            activeCheckedInShift: activeCheckedInShift,
-            completedShiftIds: completedShiftIds,
-          ),
-          _createShift(
-            id: 'shift_sat_2',
-            shiftName: 'Ca Tối (Cao điểm)',
-            startTime: '18:00',
-            endTime: '23:00',
-            hours: 5.0,
-            branch: branch,
-            role: 'Phục vụ bàn',
-            date: date,
-            activeCheckedInShift: activeCheckedInShift,
-            completedShiftIds: completedShiftIds,
-          ),
-        ];
-
-      case DateTime.sunday: // Chủ Nhật - Không có ca xếp
+  /// Trạng thái hiển thị suy ra trực tiếp từ `attendanceState` mà backend tính
+  /// (cửa sổ check-out, grace period đã nằm trong đó), không tự đoán từ đồng hồ.
+  static String statusFromAttendance(ApiShiftModel shift) {
+    if (shift.isCancelled) return 'cancelled';
+    switch (shift.attendanceState) {
+      case 'completed':
+        return 'completed';
+      case 'working':
+      case 'missed_checkout':
+        return 'active';
+      case 'missed_checkin':
+        return 'missed';
+      case 'not_started':
+        return 'upcoming';
       default:
-        return [];
+        return calculateShiftStatus(
+          date: parseVnDate(shift.workDate) ?? DateTime.now(),
+          startTime: shift.scheduledStart,
+          endTime: shift.scheduledEnd,
+          isCheckedIn: shift.checkIn != null,
+          isCheckedOut: shift.checkOut != null,
+        );
     }
-  }
-
-  /// Lấy danh sách ca làm việc được phân công cho nhân viên trong ngày hôm nay.
-  static List<ShiftDetail> getTodayAssignedShifts({
-    UserModel? user,
-    String? branchName,
-    ShiftDetail? activeCheckedInShift,
-    Set<String>? completedShiftIds,
-  }) {
-    return getAssignedShiftsForDate(
-      DateTime.now(),
-      user: user,
-      branchName: branchName,
-      activeCheckedInShift: activeCheckedInShift,
-      completedShiftIds: completedShiftIds,
-    );
-  }
-
-  /// Lấy toàn bộ lịch 7 ngày trong tuần theo `weekOffset` (0: tuần này, -1: tuần trước, 1: tuần sau).
-  static List<DayScheduleModel> getWeekData(
-    int offset, {
-    UserModel? user,
-    String? branchName,
-    ShiftDetail? activeCheckedInShift,
-    Set<String>? completedShiftIds,
-  }) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final monday = getMonday(today).add(Duration(days: offset * 7));
-    final List<String> dayNames = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'CN'];
-
-    return List.generate(7, (i) {
-      final dayDate = monday.add(Duration(days: i));
-      final isToday = dayDate.year == today.year && dayDate.month == today.month && dayDate.day == today.day;
-      final dateStr = vnDate(dayDate);
-      final shifts = getAssignedShiftsForDate(
-        dayDate,
-        user: user,
-        branchName: branchName,
-        activeCheckedInShift: isToday ? activeCheckedInShift : null,
-        completedShiftIds: completedShiftIds,
-      );
-
-      return DayScheduleModel(
-        dayOfWeek: dayNames[i],
-        date: dateStr,
-        isToday: isToday,
-        shifts: shifts,
-      );
-    });
   }
 
   static bool _matchesDate(String dateStr, DateTime target) {
@@ -458,11 +279,15 @@ class ScheduleService {
 
   /// Lấy toàn bộ lịch 7 ngày trong tuần có tích hợp ca thật từ [apiShifts].
   /// Chỉ dùng API thật: khi API rỗng thì trả về khung tuần rỗng, không fallback mock.
+  ///
+  /// Backend chỉ gửi `templateId` (UUID) trên ca, tên ca lấy từ
+  /// `GET /api/shift-templates` qua [templateNames].
   static List<DayScheduleModel> getWeekDataWithApi({
     required int offset,
     required List<ApiShiftModel> apiShifts,
     UserModel? user,
     String? branchName,
+    Map<String, String> templateNames = const {},
     ShiftDetail? activeCheckedInShift,
     Set<String>? completedShiftIds,
   }) {
@@ -481,11 +306,9 @@ class ScheduleService {
       final dateStr = vnDate(dayDate);
 
       final matchingShifts = apiShifts.where((s) {
-      if (!_matchesDate(s.date, dayDate)) return false;
+      if (!_matchesDate(s.workDate, dayDate)) return false;
       if (user != null && s.employeeId != null && s.employeeId!.isNotEmpty) {
-        final matchesId = s.employeeId == user.id;
-        final matchesEmail = s.employeeId == user.email;
-        if (!matchesId && !matchesEmail) return false;
+        if (s.employeeId != user.employeeId) return false;
       }
       return true;
     }).toList();
@@ -494,38 +317,30 @@ class ScheduleService {
       if (matchingShifts.isNotEmpty) {
         shifts = matchingShifts.map((s) {
           final hours = _calculateHours(s.scheduledStart, s.scheduledEnd);
-          final isCheckedIn = s.checkIn != null ||
-              (activeCheckedInShift != null &&
-                  (activeCheckedInShift.id == s.id || activeCheckedInShift.shiftName == s.template));
-          final isCheckedOut = s.checkOut != null ||
-              (completedShiftIds != null && completedShiftIds.contains(s.id));
-          // Ưu tiên trạng thái và giờ chấm công thật từ API thay vì suy diễn từ đồng hồ.
-          final String status;
-          if (s.status == 'hoàn thành' || s.status == 'completed' || isCheckedOut) {
-            status = 'completed';
-          } else if (s.status == 'missed' || s.status == 'absent') {
-            status = 'missed';
-          } else {
-            status = calculateShiftStatus(
-              date: dayDate,
-              startTime: s.scheduledStart,
-              endTime: s.scheduledEnd,
-              isCheckedIn: isCheckedIn,
-              isCheckedOut: isCheckedOut,
-            );
+          var status = statusFromAttendance(s);
+          // Ca đã check-in nhưng người dùng vừa bấm vào ca (hoặc ca đã chốt trong
+          // phiên này) thì giữ phản hồi tức thì của UI.
+          if (status == 'upcoming' &&
+              activeCheckedInShift != null &&
+              (activeCheckedInShift.id == s.id ||
+                  activeCheckedInShift.shiftName == (templateNames[s.templateId] ?? s.templateId))) {
+            status = 'active';
           }
-
-          final rawBranch = s.branchSlug ?? branchName ?? '';
-          final branchDisplayName = rawBranch.isNotEmpty ? branchById(rawBranch).name : '';
+          if (status != 'completed' && completedShiftIds != null && completedShiftIds.contains(s.id)) {
+            status = 'completed';
+          }
 
           return ShiftDetail(
             id: s.id,
-            shiftName: s.template,
+            shiftName: templateNames[s.templateId] ?? s.templateId,
             startTime: s.scheduledStart,
             endTime: s.scheduledEnd,
             hours: hours,
-            branch: branchDisplayName,
+            branch: branchName ?? '',
+            branchId: s.branchId ?? '',
             role: s.note ?? '',
+            attendanceState: s.attendanceState,
+            canCheckout: s.canCheckout,
             status: status,
           );
         }).toList();
@@ -546,53 +361,41 @@ class ScheduleService {
     required List<ApiShiftModel> apiShifts,
     UserModel? user,
     String? branchName,
+    Map<String, String> templateNames = const {},
     ShiftDetail? activeCheckedInShift,
   }) {
     // Chỉ dùng API thật: khi API rỗng thì trả về danh sách rỗng, không fallback mock.
     if (apiShifts.isEmpty) {
       return [];
     }
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
     final matchingShifts = apiShifts.where((s) {
-      if (!_matchesDate(s.date, today)) return false;
+      if (!_matchesDate(s.workDate, _today())) return false;
       if (user != null && s.employeeId != null && s.employeeId!.isNotEmpty) {
-        final matchesId = s.employeeId == user.id;
-        final matchesEmail = s.employeeId == user.email;
-        if (!matchesId && !matchesEmail) return false;
+        if (s.employeeId != user.employeeId) return false;
       }
       return true;
     }).toList();
     if (matchingShifts.isEmpty) return [];
     return matchingShifts.map((s) {
       final hours = _calculateHours(s.scheduledStart, s.scheduledEnd);
-      final String status;
-      if (s.status == 'hoàn thành' || s.status == 'completed' || s.checkOut != null) {
-        status = 'completed';
-      } else if (s.checkIn != null) {
-        status = 'active';
-      } else if (s.status == 'missed' || s.status == 'absent') {
-        status = 'missed';
-      } else {
-        status = calculateShiftStatus(
-          date: today,
-          startTime: s.scheduledStart,
-          endTime: s.scheduledEnd,
-        );
-      }
-      final rawBranch = s.branchSlug ?? branchName ?? '';
-      final branchDisplayName = rawBranch.isNotEmpty ? branchById(rawBranch).name : '';
-
       return ShiftDetail(
         id: s.id,
-        shiftName: s.template,
+        shiftName: templateNames[s.templateId] ?? s.templateId,
         startTime: s.scheduledStart,
         endTime: s.scheduledEnd,
         hours: hours,
-        branch: branchDisplayName,
+        branch: branchName ?? '',
+        branchId: s.branchId ?? '',
         role: s.note ?? '',
-        status: status,
+        attendanceState: s.attendanceState,
+        canCheckout: s.canCheckout,
+        status: statusFromAttendance(s),
       );
     }).toList();
+  }
+
+  static DateTime _today() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
   }
 }

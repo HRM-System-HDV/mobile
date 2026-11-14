@@ -17,6 +17,13 @@ class ApprovalRepository {
         .toList();
   }
 
+  /// Đọc một đơn theo id để lấy `shiftSwapMode` của chính đơn đó. BE mở
+  /// GET /api/requests/:id cho người gửi và người nhận (requestRead).
+  Future<LeaveRequestModel> get(String id) async {
+    final data = await api.getJson('/api/requests/$id');
+    return LeaveRequestModel.fromJson((data as Map).cast<String, dynamic>());
+  }
+
   Future<void> approve(String id, {String? note}) => api.putJson(
         '/api/requests/$id/approve',
         {if (note != null) 'reviewNote': note},
@@ -27,7 +34,11 @@ class ApprovalRepository {
         {if (note != null) 'reviewNote': note},
       );
 
-  /// Đồng nghiệp được nhờ làm thay / đổi ca phản hồi (khác với quản lý duyệt).
-  Future<void> respond(String id, {required bool accept}) =>
-      api.putJson('/api/requests/$id/respond', {'accept': accept});
+  /// Đồng nghiệp được nhờ làm thay / đổi ca phản hồi. integration-service chỉ mở
+  /// hai route này cho đúng người nhận đơn khi shiftSwapMode là mutual_acceptance;
+  /// `reviewRequest(peer: true)` chỉ đọc `reviewNote` trong body.
+  Future<void> respond(String id, {required bool accept, String? note}) => api.putJson(
+        '/api/requests/$id/${accept ? 'accept' : 'decline'}',
+        {if (note != null) 'reviewNote': note},
+      );
 }

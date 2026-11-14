@@ -33,11 +33,21 @@ class ApiClient {
   static const FlutterSecureStorage _storage = FlutterSecureStorage();
   static const String _kAccessToken = 'hrm.accessToken';
   static const String _kRefreshToken = 'hrm.refreshToken';
+  static const String _kDeviceSessionId = 'hrm.deviceSessionId';
 
-  static String? _globalCookie;
   static String? _globalAccessToken;
   static String? _globalRefreshToken;
+  static String? _globalDeviceSessionId;
   static bool _remember = false;
+
+  /// Header thông tin thiết bị thật (x-device-*), gắn lúc khởi động.
+  static Map<String, String> _deviceHeaders = {};
+
+  static void setDeviceHeaders(Map<String, String> headers) {
+    _deviceHeaders = Map.unmodifiable(headers);
+  }
+
+  static String? get currentRefreshToken => _globalRefreshToken;
 
   /// Nhiều request cùng dính 401 thì chỉ kéo theo một lần refresh.
   static Future<bool>? _refreshing;
@@ -49,18 +59,25 @@ class ApiClient {
       : baseUrl = baseUrl ?? CompanyConfig.apiBaseUrl,
         timeout = timeout ?? CompanyConfig.apiTimeout;
 
-  void setSession({String? cookie, String? accessToken, String? refreshToken}) {
-    if (cookie != null) _globalCookie = cookie;
+  void setSession({
+    String? accessToken,
+    String? refreshToken,
+    String? deviceSessionId,
+  }) {
     if (accessToken != null) _globalAccessToken = accessToken;
     if (refreshToken != null) _globalRefreshToken = refreshToken;
+    if (deviceSessionId != null) _globalDeviceSessionId = deviceSessionId;
   }
 
   static void clearSession() {
-    _globalCookie = null;
     _globalAccessToken = null;
     _globalRefreshToken = null;
+    _globalDeviceSessionId = null;
     _remember = false;
   }
+
+  /// Hết phiên cưỡng bức (vd đổi mật khẩu): xóa phiên và đưa về màn đăng nhập.
+  static Future<void> forceExpireSession() => _expireSession();
 
   /// Header cho ảnh phục vụ sau JWT của gateway (/api/files). Chỉ gắn khi URL
   /// cùng origin gateway để không lộ token ra dịch vụ ngoài (ảnh cũ lưu nơi khác).
@@ -71,12 +88,9 @@ class ApiClient {
     final sameOrigin =
         uri.scheme == base.scheme && uri.host == base.host && uri.port == base.port;
     if (!sameOrigin || !uri.path.startsWith('/api/files/')) return null;
-    final h = <String, String>{};
-    final cookie = _globalCookie;
-    if (cookie != null) h['Cookie'] = cookie;
     final token = _globalAccessToken;
-    if (token != null) h['Authorization'] = 'Bearer $token';
-    return h;
+    if (token == null) return null;
+    return {'Authorization': 'Bearer $token'};
   }
 
   /// Bật thì ghi token vào Keychain/Keystore, tắt thì xóa bản đã lưu.
@@ -99,6 +113,7 @@ class ApiClient {
       if (access == null || access.isEmpty) return false;
       _globalAccessToken = access;
       _globalRefreshToken = await _storage.read(key: _kRefreshToken);
+      _globalDeviceSessionId = await _storage.read(key: _kDeviceSessionId);
       _remember = true;
       return true;
     } catch (_) {
@@ -110,6 +125,7 @@ class ApiClient {
     try {
       await _storage.delete(key: _kAccessToken);
       await _storage.delete(key: _kRefreshToken);
+      await _storage.delete(key: _kDeviceSessionId);
     } catch (_) {}
   }
 
@@ -121,6 +137,10 @@ class ApiClient {
     if (refresh != null && refresh.isNotEmpty) {
       await _storage.write(key: _kRefreshToken, value: refresh);
     }
+    final sessionId = _globalDeviceSessionId;
+    if (sessionId != null && sessionId.isNotEmpty) {
+      await _storage.write(key: _kDeviceSessionId, value: sessionId);
+    }
   }
 
   static Future<void> _expireSession() async {
@@ -131,20 +151,16 @@ class ApiClient {
     onSessionExpired?.call();
   }
 
-  static void _captureCookie(http.Response res) {
-    final setCookie = res.headers['set-cookie'];
-    if (setCookie != null && setCookie.contains('hrm-session')) {
-      _globalCookie = setCookie.split(';').first;
-    }
-  }
-
   Map<String, String> _headers({bool json = true}) {
     final h = <String, String>{};
     if (json) h['Content-Type'] = 'application/json';
-    final cookie = _globalCookie;
-    if (cookie != null) h['Cookie'] = cookie;
     final token = _globalAccessToken;
     if (token != null) h['Authorization'] = 'Bearer $token';
+    h.addAll(_deviceHeaders);
+    final sessionId = _globalDeviceSessionId;
+    if (sessionId != null && sessionId.isNotEmpty) {
+      h['x-device-session-id'] = sessionId;
+    }
     return h;
   }
 
@@ -221,10 +237,16 @@ class ApiClient {
   /// Gọi thẳng, không qua [_send] để tránh đệ quy khi chính refresh bị 401.
   Future<bool> _performRefresh(String refreshToken) async {
     try {
+      final headers = <String, String>{'Content-Type': 'application/json'};
+      headers.addAll(_deviceHeaders);
+      final sessionId = _globalDeviceSessionId;
+      if (sessionId != null && sessionId.isNotEmpty) {
+        headers['x-device-session-id'] = sessionId;
+      }
       final res = await http
           .post(
             Uri.parse('$baseUrl/api/auth/refresh'),
-            headers: {'Content-Type': 'application/json'},
+            headers: headers,
             body: jsonEncode({'refreshToken': refreshToken}),
           )
           .timeout(timeout);
@@ -236,7 +258,6 @@ class ApiClient {
       if (access == null || access.isEmpty) return false;
       _globalAccessToken = access;
       _globalRefreshToken = data['refreshToken']?.toString() ?? refreshToken;
-      _captureCookie(res);
       if (_remember) await _writeTokens();
       return true;
     } catch (_) {
@@ -262,7 +283,6 @@ class ApiClient {
   /// POST JSON, trả về `data` trong envelope.
   Future<dynamic> postJson(String path, Map<String, dynamic> payload) async {
     final res = await _send('POST', Uri.parse('$baseUrl$path'), body: jsonEncode(payload));
-    _captureCookie(res);
     return _unwrap(res);
   }
 
@@ -279,6 +299,12 @@ class ApiClient {
   }
 
   /// POST SOAP nguyên vẹn XML (gateway không bọc envelope).
+  ///
+  /// Gateway chỉ mở `POST /soap/payroll` cho vai trò `admin`
+  /// (`backend/api-gateway/src/middlewares/authorize.js`), nên phải ném
+  /// [ApiException] khi ngoài 2xx: nếu không thì body lỗi `{ error }` của 403
+  /// sẽ bị trả về như một phản hồi SOAP thành công, rất khó hiểu với
+  /// staff/manager.
   Future<String> postSoap(String xmlBody) async {
     final res = await _send(
       'POST',
@@ -287,6 +313,9 @@ class ApiClient {
       body: xmlBody,
       extraHeaders: {'Content-Type': 'text/xml; charset=utf-8'},
     );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      _throwFromBody(res.statusCode, _tryDecode(res.body));
+    }
     return res.body;
   }
 }

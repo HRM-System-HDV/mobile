@@ -103,7 +103,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   icon: Badge.count(
                     count: unreadCount,
                     isLabelVisible: unreadCount > 0,
-                    backgroundColor: const Color(0xFFDC2626),
+                    backgroundColor: AppColors.error,
                     textColor: Colors.white,
                     textStyle: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
                     child: const Icon(Icons.notifications_none_rounded),
@@ -111,7 +111,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   activeIcon: Badge.count(
                     count: unreadCount,
                     isLabelVisible: unreadCount > 0,
-                    backgroundColor: const Color(0xFFDC2626),
+                    backgroundColor: AppColors.error,
                     textColor: Colors.white,
                     textStyle: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
                     child: const Icon(Icons.notifications_rounded),

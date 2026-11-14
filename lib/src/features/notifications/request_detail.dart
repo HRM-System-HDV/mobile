@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/constants/colors.dart';
+import '../../core/models/branch.dart';
 import '../../core/network/api_client.dart';
 import '../../core/state/user_scope.dart';
 import '../../core/utils/date_format.dart';
@@ -70,10 +71,30 @@ class ShiftRequestDetailScreen extends StatefulWidget {
 class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
   late ShiftRequestStatus _status;
 
+  /// `false` = đơn thuộc chế độ quản lý duyệt, nhân viên được nhờ KHÔNG phản hồi
+  /// được (integration-service chặn 403). `null` = chưa đọc được đơn từ API.
+  bool? _peerCanRespond;
+
   @override
   void initState() {
     super.initState();
     _status = widget.initialStatus;
+    if (_status == ShiftRequestStatus.pending && widget.requestId.isNotEmpty) {
+      _loadShiftSwapMode();
+    }
+  }
+
+  /// Lấy `shiftSwapMode` của chính đơn (bản chụp lúc tạo) thay vì suy từ cấu hình
+  /// chấm công toàn cục — cấu hình có thể đã đổi sau khi gửi đơn.
+  Future<void> _loadShiftSwapMode() async {
+    try {
+      final row = await ApprovalRepository().get(widget.requestId);
+      if (!mounted) return;
+      setState(() => _peerCanRespond = row.shiftSwapMode == 'mutual_acceptance');
+    } catch (_) {
+      // Không đọc được đơn thì giữ nguyên quyền bấm; BE vẫn chặn và _handleResponse
+      // sẽ hiện đúng thông báo lỗi.
+    }
   }
 
   Future<void> _handleResponse(ShiftRequestStatus newStatus) async {
@@ -96,10 +117,12 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
     }
 
     final isAccept = newStatus == ShiftRequestStatus.accepted;
+    // Chấp nhận là lệnh đổi lịch phân ca thật (integration-service gọi
+    // /api/shifts/swap trước khi ghi approved), nên báo rõ kết quả.
     final message = isAccept
         ? (widget.requestType == 'cover'
-            ? '✅ Bạn đã chấp nhận làm thay ca cho ${widget.senderName}!'
-            : '✅ Bạn đã chấp nhận đổi ca với ${widget.senderName}!')
+            ? '✅ Bạn đã nhận làm thay ca cho ${widget.senderName} — lịch phân ca đã cập nhật!'
+            : '✅ Bạn đã đổi ca với ${widget.senderName} — lịch phân ca của hai bạn đã đổi!')
         : '❌ Bạn đã từ chối yêu cầu từ ${widget.senderName}.';
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -238,7 +261,7 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
                   _divider(),
                   _buildInfoRow(FontAwesomeIcons.stopwatch, 'Số giờ làm việc', widget.shiftHours.isEmpty ? '—' : widget.shiftHours),
                   _divider(),
-                  _buildInfoRow(FontAwesomeIcons.store, 'Chi nhánh', widget.branch),
+                  _buildInfoRow(FontAwesomeIcons.store, 'Chi nhánh', _branchLabel(widget.branch)),
                   _divider(),
                   _buildInfoRow(FontAwesomeIcons.idCard, 'Vị trí công việc', widget.shiftRole.isEmpty ? '—' : widget.shiftRole),
                   _divider(),
@@ -294,7 +317,7 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
                     _divider(),
                     _buildInfoRow(FontAwesomeIcons.stopwatch, 'Số giờ làm việc', widget.swapShiftHours ?? '—'),
                     _divider(),
-                    _buildInfoRow(FontAwesomeIcons.store, 'Chi nhánh', widget.swapShiftBranch ?? widget.branch),
+                    _buildInfoRow(FontAwesomeIcons.store, 'Chi nhánh', _branchLabel(widget.swapShiftBranch ?? widget.branch)),
                     _divider(),
                     _buildInfoRow(FontAwesomeIcons.idCard, 'Vị trí công việc', widget.swapShiftRole ?? '—'),
                     _divider(),
@@ -352,6 +375,14 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
 
   Widget _divider() => const Divider(height: 1, indent: 16, endIndent: 16);
 
+  /// branchId là UUID (thiết kế lại 13-14/11 đã bỏ slug): phân giải qua cache branch
+  /// nạp lúc đăng nhập; không có trong cache thì giữ nguyên id (không bịa tên).
+  String _branchLabel(String raw) {
+    if (raw.trim().isEmpty) return '—';
+    final name = branchById(raw.trim()).name;
+    return name.isEmpty ? raw : name;
+  }
+
   Widget _buildInfoRow(FaIconData icon, String label, String value, {Color? valueColor}) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
@@ -383,6 +414,9 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
   }
 
   Widget _buildBottomActionBar() {
+    // BE chặn nhân viên đích accept/decline khi đơn ở chế độ manager_approval
+    // (403 "Bạn không có quyền phản hồi đơn này") nên không vẽ 2 nút phản hồi.
+    final bool awaitingManager = _status == ShiftRequestStatus.pending && _peerCanRespond == false;
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       decoration: BoxDecoration(
@@ -397,7 +431,7 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
       ),
       child: SafeArea(
         top: false,
-        child: _status == ShiftRequestStatus.pending
+        child: _status == ShiftRequestStatus.pending && !awaitingManager
             ? Row(
                 children: [
                   Expanded(
@@ -438,6 +472,32 @@ class _ShiftRequestDetailScreenState extends State<ShiftRequestDetailScreen> {
                     ),
                   ),
                 ],
+              )
+            : awaitingManager
+            ? Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blue.shade200),
+                ),
+                child: const Row(
+                  children: [
+                    FaIcon(FontAwesomeIcons.clock, color: AppColors.primary, size: 20),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Đơn này do Quản lý chi nhánh phê duyệt. Bạn không cần phản hồi.',
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               )
             : Container(
                 width: double.infinity,

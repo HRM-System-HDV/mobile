@@ -1,39 +1,45 @@
 /// Chi nhánh doanh nghiệp trong hệ thống HRM On-Premises.
+///
+/// organization-service trả `id, branchCode, name, address, status`; không còn
+/// `slug`/`branchSlug` ở bất kỳ tầng nào, mọi filter theo chi nhánh dùng `id`
+/// (UUID) của branch.
 class Branch {
   final String id;
-  final String slug; // khớp branchSlug trên Web Portal (VD: CN01)
-  final String code; // mã rút gọn (VD: CN01)
+
+  /// Mã nghiệp vụ chi nhánh (VD: CN-00001) — đúng cột `branchCode` của backend.
+  final String branchCode;
   final String name;
   final String address;
 
   const Branch({
     required this.id,
-    required this.slug,
-    required this.code,
+    required this.branchCode,
     required this.name,
     required this.address,
   });
 
+  /// Nhãn ngắn dùng cho UI (viết hoa, lọc cache...).
+  String get code => branchCode;
+
   factory Branch.fromJson(Map<String, dynamic> json) {
-    final slug = json['slug']?.toString() ?? json['id']?.toString() ?? '';
-    final code = json['code']?.toString() ?? slug.toUpperCase();
-    final name = json['name']?.toString() ?? (code.isNotEmpty ? 'Chi nhánh $code' : 'Chi nhánh');
+    final id = json['id']?.toString() ?? '';
+    final branchCode = json['branchCode']?.toString() ?? id;
+    final name = json['name']?.toString() ??
+        (branchCode.isNotEmpty ? 'Chi nhánh $branchCode' : 'Chi nhánh');
     return Branch(
-      id: json['id']?.toString() ?? slug,
-      slug: slug,
-      code: code,
+      id: id,
+      branchCode: branchCode,
       name: name,
       address: json['address']?.toString() ?? '',
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'slug': slug,
-    'code': code,
-    'name': name,
-    'address': address,
-  };
+        'id': id,
+        'branchCode': branchCode,
+        'name': name,
+        'address': address,
+      };
 }
 
 /// Cache danh sách chi nhánh được tải từ API / DB thật
@@ -47,24 +53,22 @@ void updateBranchCache(List<Branch> branches) {
 /// Lấy danh sách chi nhánh đã tải từ server
 List<Branch> get branches => _cachedBranches;
 
-/// Lấy branch theo id hoặc slug từ cache hoặc khởi tạo branch tạm thời khớp với slug/id
-Branch branchById(String idOrSlug) {
-  final query = idOrSlug.trim();
+/// Lấy branch theo id hoặc branchCode từ cache; không có trong cache thì trả
+/// đối tượng tạm mang đúng id đó (không bịa tên chi nhánh).
+Branch branchById(String idOrCode) {
+  final query = idOrCode.trim();
   final lower = query.toLowerCase();
 
   for (final b in _cachedBranches) {
-    if (b.id == query || b.slug.toLowerCase() == lower || b.code.toLowerCase() == lower) {
+    if (b.id == query || b.branchCode.toLowerCase() == lower) {
       return b;
     }
   }
 
-  // Nếu chưa có trong cache, tạo Branch động với slug/id đó thay vì mock dữ liệu giả
-  final code = query.toUpperCase();
   return Branch(
     id: query,
-    slug: query,
-    code: code,
-    name: code.isNotEmpty ? 'Chi nhánh $code' : 'Chi nhánh',
+    branchCode: query,
+    name: query,
     address: '',
   );
 }
